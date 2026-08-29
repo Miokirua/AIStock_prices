@@ -1,0 +1,46 @@
+*.iml
+.gradle
+/local.properties
+.idea
+.DS_Store
+/build
+*/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.so
+*.js
+node_modules
+Pods
+Pods/*
+Pods-iosApp/*
+Kotlin-js-store
+
+## Various settings
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+**/xcuserdata/**
+**/*.xcuserdatad/**
+**/xcshareddata/
+**/IDEWorkspaceChecks.plist
+
+## Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+*.xcbkptlist
+*.pyc
+
+## 本地工作目录与敏感数据（不得提交）
+.workbuddy/
+*.xml.sp
+sp_new.xml
+.kotlin/
+.run/
