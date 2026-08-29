@@ -3,22 +3,22 @@
 基于 **Kuikly**（Kotlin Multiplatform UI 框架）的跨端 AI 股票行情原型 Demo。
 内置 A 股自选列表、实时行情、分时/日K线图表，以及基于 LLM 的 AI 分析与解读（可配置任意 OpenAI 兼容服务）。
 
-## ✨ 功能特性
+##  功能特性
 
 | 模块 | 说明 |
 |------|------|
-| 📋 自选股列表 | 内置 10 只知名 A 股；支持手动添加 / 删除，本地持久化 |
-| 📈 个股详情 | 报价区、分时走势图（面积填充）、日K线蜡烛图、行情详情表 |
-| 🤖 AI 分析解读 | 趋势判断 / 买卖参考点位 / 操作建议 / 风险提醒 / 行情总结 |
-| ⚙️ 可配置 LLM | Base URL / API Key / 模型运行时输入，支持自动读取可用模型 |
-| 🔄 预设切换 | 保存后自动以模型名创建预设，一键切换（含 Key）、可编辑删除 |
-| 💾 本地缓存 | 行情快照落盘，接口临时失效页面不空白；60 秒轮询刷新 |
-| 🚦 风险等级 | 详情页顶部小字色块展示风险（低/中/高），未配置 API 不显示 |
-| 🛡 降级策略 | LLM 调用失败自动切换本地规则生成分析，演示链路不中断 |
+|  自选股列表 | 内置 10 只知名 A 股；支持手动添加 / 删除，本地持久化 |
+|  个股详情 | 报价区、分时走势图（面积填充）、日K线蜡烛图、行情详情表 |
+|  AI 分析解读 | 趋势判断 / 买卖参考点位 / 操作建议 / 风险提醒 / 行情总结 |
+|  可配置 LLM | Base URL / API Key / 模型运行时输入，支持自动读取可用模型 |
+|  预设切换 | 保存后自动以模型名创建预设，一键切换（含 Key）、可编辑删除 |
+|  本地缓存 | 行情快照落盘，接口临时失效页面不空白；60 秒轮询刷新 |
+|  风险等级 | 详情页顶部小字色块展示风险（低/中/高），未配置 API 不显示 |
+|  降级策略 | LLM 调用失败自动切换本地规则生成分析，演示链路不中断 |
 
 > 涨红跌绿遵循 A 股配色惯例。
 
-## 🧱 技术栈
+##  技术栈
 
 - **框架**：[Kuikly](https://github.com/Tencent-TDS/KuiklyUI)（Kuikly DSL）+ Kotlin Multiplatform
 - **平台**：Android 优先，业务代码全部位于 `shared/commonMain`，可扩展 iOS / HarmonyOS / H5
@@ -26,7 +26,7 @@
 - **AI 服务**：OpenAI 兼容 `chat/completions` 协议，任意服务商
 - **构建**：Gradle 8.5 · AGP 8.2.2 · Kotlin 2.1.21 · Kuikly 2.7.0
 
-## 🚀 快速开始
+##  快速开始
 
 ### 环境要求
 
@@ -57,7 +57,7 @@ androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
 **预设**：每次保存自动以模型名创建一个预设，可一键切换、删除。
 
-## 🗂 工程结构
+##  工程结构
 
 ```
 ├── shared/                          # 跨端业务代码（核心）
@@ -75,24 +75,3 @@ androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ├── androidApp/                      # Android 宿主工程
 └── iosApp/ / ohosApp/               # iOS / 鸿蒙宿主（脚手架预留）
 ```
-
-## 🔐 安全说明（重要）
-
-- **Key 不硬编码**：全部运行时输入，存储在设备应用私有目录
-  `/data/data/com.example.aistock_prices/shared_prefs/KRSharedPreferencesModule.xml`
-  （明文，仅适用于原型演示；生产环境请改用 Android Keystore / EncryptedSharedPreferences）
-- **禁止提交敏感数据**：`.gitignore` 已忽略 `.workbuddy/` 等工作目录；
-  请勿将设备上的 SP 文件、备份文件或含 Key 的日志提交到仓库
-- LLM 失败时自动降级为本地规则分析，不影响演示
-
-## 🔭 后续规划
-
-- [ ] 自选列表按涨幅/名称排序、分组
-- [ ] 分时/日K 切换更多周期（周K、月K）
-- [ ] 技术指标叠加（MA5/MA10/MA20、MACD、RSI）
-- [ ] iOS / HarmonyOS / H5 构建与联调
-- [ ] 行情接口失效时的多源切换（新浪/东财）
-
-## 📄 License
-
-MIT License（原型演示用途）
