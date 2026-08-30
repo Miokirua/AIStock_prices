@@ -61,6 +61,8 @@ internal class StockDetailPage : BasePager() {
     private var lastConfigHash = ""
     /** 60 秒轮询定时器引用 */
     private var pollTimerRef = ""
+    /** 加载超时兜底计时器引用 */
+    private var loadTimerRef = ""
 
     private val stockCode: String get() = pagerData.params.optString("code")
     private val stockName: String get() = pagerData.params.optString("name", "个股详情")
@@ -205,6 +207,13 @@ internal class StockDetailPage : BasePager() {
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         stopPolling()
+        stopLoadTimer()
+    }
+
+    override fun pageWillDestroy() {
+        super.pageWillDestroy()
+        stopPolling()
+        stopLoadTimer()
     }
 
     /** 60 秒轮询刷新报价与分时（静默覆盖 + 写缓存） */
@@ -223,12 +232,15 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    /** 拉取最新报价 + 分时并写缓存（静默） */
+    /** 拉取最新报价 + 分时并写缓存（静默）；成功时解除加载超时兜底 */
     private fun refreshQuoteAndMinute() {
         StockRepository.fetchQuotes(network, listOf(stockCode)) { list ->
             val q = list.firstOrNull()
             if (q != null) {
+                stopLoadTimer()
                 quote = q
+                loading = false
+                errorMsg = ""
                 StockCache.saveQuotes(sp, list)
                 maybeRunAutoAnalyze()
             }
@@ -277,11 +289,40 @@ internal class StockDetailPage : BasePager() {
     private val sp: SharedPreferencesModule
         get() = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
 
-    /** 加载详情：先展示本地缓存，再拉新数据覆盖并写缓存 */
+    /** 加载详情：先展示本地缓存，再拉新数据覆盖并写缓存；超时未就绪时用本地数据兜底 */
     private fun loadDetail() {
         loading = true
         errorMsg = ""
         // 1. 缓存优先展示（接口临时失效时页面不空白）
+        applyCache()
+        // 2. 加载超时兜底：8 秒内行情仍未加载出来，则使用本地缓存或提示错误，避免一直空白
+        stopLoadTimer()
+        loadTimerRef = setTimeout(8000) {
+            loadTimerRef = ""
+            if (quote != null) return@setTimeout
+            applyCache()
+            if (quote != null) {
+                loading = false
+                errorMsg = ""
+                bridgeModule.toast("网络较慢，已展示本地缓存数据")
+            } else {
+                loading = false
+                errorMsg = "行情加载超时，请检查网络后重试"
+            }
+        }
+        // 3. 拉取最新数据（成功后会解除超时兜底）
+        refreshQuoteAndMinute()
+        // 4. 日K线（独立加载，失败不影响其他区域）
+        StockRepository.fetchKLine(network, stockCode, 60) { bars ->
+            klineBars.clear()
+            klineBars.addAll(bars)
+            StockCache.saveKLine(sp, stockCode, bars)
+            maybeRunAutoAnalyze()
+        }
+    }
+
+    /** 将本地缓存填充到页面（报价/分时/K线，任一有数据即退出整页 loading） */
+    private fun applyCache() {
         val cachedQuote = StockCache.loadQuotes(sp).firstOrNull { it.code == stockCode }
         val cachedMinute = StockCache.loadMinute(sp, stockCode)
         val cachedKLine = StockCache.loadKLine(sp, stockCode)
@@ -297,14 +338,12 @@ internal class StockDetailPage : BasePager() {
         if (cachedQuote != null || cachedMinute.isNotEmpty()) {
             loading = false
         }
-        // 2. 拉取最新数据
-        refreshQuoteAndMinute()
-        // 3. 日K线（独立加载，失败不影响其他区域）
-        StockRepository.fetchKLine(network, stockCode, 60) { bars ->
-            klineBars.clear()
-            klineBars.addAll(bars)
-            StockCache.saveKLine(sp, stockCode, bars)
-            maybeRunAutoAnalyze()
+    }
+
+    private fun stopLoadTimer() {
+        if (loadTimerRef.isNotEmpty()) {
+            clearTimeout(loadTimerRef)
+            loadTimerRef = ""
         }
     }
 

@@ -7,7 +7,8 @@ package com.example.aistock_prices.stock.data
  */
 data class StockMeta(
     val code: String,   // 腾讯代码，如 sh600519 / sz000001
-    val name: String    // 本地维护的中文名称
+    val name: String,   // 本地维护的中文名称
+    val pinned: Boolean = false // 是否置顶（置顶项排在最前）
 ) {
     val symbol: String get() = code.removePrefix("sh").removePrefix("sz").removePrefix("hk")
 }
@@ -69,18 +70,18 @@ object Watchlist {
         StockMeta("sz300059", "东方财富")
     )
 
-    /** 当前自选列表：未保存过时返回内置默认 */
+    /** 当前自选列表：未保存过时返回内置默认；置顶项始终排在最前（稳定排序） */
     fun stocks(sp: com.tencent.kuikly.core.module.SharedPreferencesModule): List<StockMeta> {
         val raw = sp.getItem(KEY_STOCKS)
-        if (raw.isBlank()) return defaults
-        return parse(raw)
+        val list = if (raw.isBlank()) defaults else parse(raw)
+        return list.sortedByDescending { it.pinned }
     }
 
-    /** 添加（已存在返回 false） */
+    /** 添加（已存在返回 false；新添加默认不置顶） */
     fun add(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, meta: StockMeta): Boolean {
         val list = stocks(sp)
         if (list.any { it.code == meta.code }) return false
-        save(sp, list + meta)
+        save(sp, list + meta.copy(pinned = false))
         return true
     }
 
@@ -93,6 +94,26 @@ object Watchlist {
         return true
     }
 
+    /** 置顶 / 取消置顶 */
+    fun pin(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, code: String, pinned: Boolean): Boolean {
+        val list = stocks(sp)
+        var changed = false
+        val newList = list.map {
+            if (it.code == code && it.pinned != pinned) {
+                changed = true
+                it.copy(pinned = pinned)
+            } else it
+        }
+        if (!changed) return false
+        save(sp, newList)
+        return true
+    }
+
+    /** 是否为置顶 */
+    fun isPinned(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, code: String): Boolean {
+        return stocks(sp).firstOrNull { it.code == code }?.pinned == true
+    }
+
     private fun save(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, list: List<StockMeta>) {
         val arr = com.tencent.kuikly.core.nvi.serialization.json.JSONArray()
         list.forEach { meta ->
@@ -100,6 +121,7 @@ object Watchlist {
                 com.tencent.kuikly.core.nvi.serialization.json.JSONObject().apply {
                     put("code", meta.code)
                     put("name", meta.name)
+                    put("pinned", meta.pinned)
                 }
             )
         }
@@ -114,7 +136,7 @@ object Watchlist {
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val code = o.optString("code") ?: return@mapNotNull null
                 if (code.isBlank()) return@mapNotNull null
-                StockMeta(code, o.optString("name").ifBlank { code })
+                StockMeta(code, o.optString("name").ifBlank { code }, o.optBoolean("pinned") ?: false)
             }
         } catch (e: Throwable) {
             emptyList()

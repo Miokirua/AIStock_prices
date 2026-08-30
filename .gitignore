@@ -44,3 +44,5 @@ Kotlin-js-store
 sp_new.xml
 .kotlin/
 .run/
+## Build outputs
+/dist

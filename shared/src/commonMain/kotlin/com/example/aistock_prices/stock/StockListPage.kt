@@ -30,11 +30,11 @@ import com.tencent.kuikly.core.timer.clearTimeout
 import com.tencent.kuikly.core.views.ActivityIndicator
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
-import com.tencent.kuikly.core.views.List
 import com.tencent.kuikly.core.views.Modal
 import com.tencent.kuikly.core.views.Refresh
 import com.tencent.kuikly.core.views.RefreshView
 import com.tencent.kuikly.core.views.RefreshViewState
+import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
@@ -49,9 +49,12 @@ internal class StockListPage : BasePager() {
     private var loading by observable(true)
     private var errorMsg by observable("")
     private var refreshText by observable("下拉刷新")
+    private var lastUpdated by observable("")
     private var currentTab by observable(0)
     private var showAddDialog by observable(false)
     private var pendingRemove by observable<StockQuote?>(null)
+    /** 长按操作菜单目标（置顶/删除二合一） */
+    private var longPressTarget by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
     private var refreshRef: ViewRef<RefreshView>? = null
@@ -113,7 +116,7 @@ internal class StockListPage : BasePager() {
                             color(StockColors.ACCENT)
                         }
                         event {
-                            click { ctx.loadData() }
+                            click { ctx.onRefreshTap() }
                         }
                     }
                 }
@@ -160,12 +163,18 @@ internal class StockListPage : BasePager() {
                             allCenter()
                             backgroundColor(Color(0x66000000))
                         }
+                        event {
+                            click { ctx.showAddDialog = false }
+                        }
                         View {
                             attr {
-                                width(560f)
+                                width(ctx.pagerData.pageViewWidth - 60f)
                                 borderRadius(12f)
                                 backgroundColor(Color.WHITE)
                                 padding(20f)
+                            }
+                            event {
+                                click { }
                             }
                             Text {
                                 attr {
@@ -183,12 +192,14 @@ internal class StockListPage : BasePager() {
                                     backgroundColor(Color(0xFFF5F6F8))
                                     paddingLeft(12f)
                                     paddingRight(12f)
-                                    justifyContentCenter()
+                                    flexDirectionRow()
+                                    alignItemsCenter()
                                 }
                                 Input {
                                     ref { ctx.addInputRef = it }
                                     attr {
                                         flex(1f)
+                                        height(40f)   // 显式高度：Kuikly Input 无 height 时 Android EditText 无可点击区域
                                         fontSize(14f)
                                         color(StockColors.TEXT_MAIN)
                                         placeholder("如 600519 或 sh600519")
@@ -250,6 +261,125 @@ internal class StockListPage : BasePager() {
                 }
             }
 
+            // ---------- 长按操作菜单（置顶 / 删除 二合一） ----------
+            vif({ ctx.longPressTarget != null }) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(Color(0x66000000))
+                        }
+                        event {
+                            click { ctx.longPressTarget = null }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(Color.WHITE)
+                                padding(20f)
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("${ctx.longPressTarget?.name}  ${ctx.longPressTarget?.symbol}")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(StockColors.TEXT_MAIN)
+                                    marginBottom(6f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("请选择操作")
+                                    fontSize(13f)
+                                    color(StockColors.TEXT_SUB)
+                                    marginBottom(16f)
+                                }
+                            }
+                            // 置顶 / 取消置顶
+                            View {
+                                attr {
+                                    height(44f)
+                                    borderRadius(22f)
+                                    allCenter()
+                                    marginBottom(10f)
+                                    backgroundColor(if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) Color(0xFFF5F6F8) else StockColors.ACCENT)
+                                }
+                                Text {
+                                    attr {
+                                        text(
+                                            if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) "取消置顶"
+                                            else "置顶"
+                                        )
+                                        fontSize(15f)
+                                        color(if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) StockColors.TEXT_MAIN else Color.WHITE)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ctx.longPressTarget?.let { quote ->
+                                            val willPin = !Watchlist.isPinned(ctx.sp, quote.code)
+                                            Watchlist.pin(ctx.sp, quote.code, willPin)
+                                            ctx.bridgeModule.toast(if (willPin) "已置顶 ${quote.name}" else "已取消置顶 ${quote.name}")
+                                            ctx.longPressTarget = null
+                                            ctx.resortQuotes()
+                                        }
+                                    }
+                                }
+                            }
+                            // 删除
+                            View {
+                                attr {
+                                    height(44f)
+                                    borderRadius(22f)
+                                    allCenter()
+                                    marginBottom(10f)
+                                    backgroundColor(Color(0xFFFFF1F0))
+                                }
+                                Text {
+                                    attr {
+                                        text("删除")
+                                        fontSize(15f)
+                                        color(StockColors.UP)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ctx.pendingRemove = ctx.longPressTarget
+                                        ctx.longPressTarget = null
+                                    }
+                                }
+                            }
+                            // 取消
+                            View {
+                                attr {
+                                    height(44f)
+                                    borderRadius(22f)
+                                    allCenter()
+                                    backgroundColor(Color(0xFFF0F0F0))
+                                }
+                                Text {
+                                    attr {
+                                        text("取消")
+                                        fontSize(15f)
+                                        color(StockColors.TEXT_SUB)
+                                    }
+                                }
+                                event {
+                                    click { ctx.longPressTarget = null }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ---------- 删除确认弹窗 ----------
             vif({ ctx.pendingRemove != null }) {
                 Modal {
@@ -259,12 +389,18 @@ internal class StockListPage : BasePager() {
                             allCenter()
                             backgroundColor(Color(0x66000000))
                         }
+                        event {
+                            click { ctx.pendingRemove = null }
+                        }
                         View {
                             attr {
-                                width(520f)
+                                width(ctx.pagerData.pageViewWidth - 60f)
                                 borderRadius(12f)
                                 backgroundColor(Color.WHITE)
                                 padding(20f)
+                            }
+                            event {
+                                click { }
                             }
                             Text {
                                 attr {
@@ -414,9 +550,10 @@ internal class StockListPage : BasePager() {
                     }
                 }
                 velse {
-                    List {
+                    Scroller {
                         attr {
                             flex(1f)
+                            showScrollerIndicator(false)
                         }
                         Refresh {
                             ref {
@@ -447,6 +584,22 @@ internal class StockListPage : BasePager() {
                                     text(ctx.refreshText)
                                     fontSize(13f)
                                     color(StockColors.TEXT_SUB)
+                                }
+                            }
+                        }
+                        vif({ ctx.lastUpdated.isNotEmpty() && ctx.quotes.isNotEmpty() }) {
+                            View {
+                                attr {
+                                    height(28f)
+                                    paddingLeft(16f)
+                                    justifyContentCenter()
+                                }
+                                Text {
+                                    attr {
+                                        text("更新于 ${ctx.lastUpdated}")
+                                        fontSize(11f)
+                                        color(StockColors.TEXT_SUB)
+                                    }
                                 }
                             }
                         }
@@ -522,6 +675,16 @@ internal class StockListPage : BasePager() {
                 errorMsg = "行情加载失败，请检查网络后重试"
             }
             loading = false
+            markUpdated()
+        }
+    }
+
+    /** 点击顶栏「刷新」：列表在展示态时走下拉刷新头动画，否则整页加载 */
+    private fun onRefreshTap() {
+        if (!loading && errorMsg.isEmpty() && quotes.isNotEmpty() && refreshRef?.view != null) {
+            refreshRef?.view?.beginRefresh()
+        } else {
+            loadData()
         }
     }
 
@@ -535,7 +698,27 @@ internal class StockListPage : BasePager() {
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
             }
+            markUpdated()
+            bridgeModule.toast("已更新")
             complete()
+        }
+    }
+
+    /** 记录最近一次刷新成功时间（用于列表顶部「更新于 HH:mm:ss」反馈） */
+    private fun markUpdated() {
+        val ts = bridgeModule.currentTimeStamp()
+        lastUpdated = if (ts > 0) bridgeModule.dateFormatter(ts, "HH:mm:ss") else ""
+    }
+
+    /** 置顶/取消置顶后按 Watchlist 顺序本地重排（不发网络请求） */
+    private fun resortQuotes() {
+        val metas = Watchlist.stocks(sp)
+        val byCode = quotes.associateBy { it.code }
+        val reordered = metas.mapNotNull { byCode[it.code] } +
+                quotes.filter { it.code !in metas.map { m -> m.code } }
+        if (reordered.size == quotes.size) {
+            quotes.clear()
+            quotes.addAll(reordered)
         }
     }
 
@@ -609,12 +792,38 @@ internal class StockListPage : BasePager() {
                             flexDirectionColumn()
                             justifyContentCenter()
                         }
-                        Text {
+                        View {
                             attr {
-                                text(quote.name)
-                                fontSize(16f)
-                                fontWeightSemiBold()
-                                color(StockColors.TEXT_MAIN)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                            }
+                            Text {
+                                attr {
+                                    text(quote.name)
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(StockColors.TEXT_MAIN)
+                                }
+                            }
+                            vif({ Watchlist.isPinned(ctx.sp, quote.code) }) {
+                                View {
+                                    attr {
+                                        marginLeft(6f)
+                                        paddingTop(2f)
+                                        paddingBottom(2f)
+                                        paddingLeft(6f)
+                                        paddingRight(6f)
+                                        borderRadius(4f)
+                                        backgroundColor(Color(0xFFFFF3E0))
+                                    }
+                                    Text {
+                                        attr {
+                                            text("置顶")
+                                            fontSize(10f)
+                                            color(Color(0xFFE6A23C))
+                                        }
+                                    }
+                                }
                             }
                         }
                         Text {
@@ -671,7 +880,7 @@ internal class StockListPage : BasePager() {
                             }
                         }
                     }
-                    // 删除按钮
+                    // 更多操作按钮（点击打开 置顶/删除 菜单）
                     View {
                         attr {
                             width(36f)
@@ -679,13 +888,12 @@ internal class StockListPage : BasePager() {
                         }
                         Text {
                             attr {
-                                text("删")
-                                fontSize(12f)
+                                text("···")
+                                fontSize(18f)
                                 color(StockColors.TEXT_SUB)
-                                textDecorationUnderLine()
                             }
                             event {
-                                click { ctx.pendingRemove = quote }
+                                click { ctx.longPressTarget = quote }
                             }
                         }
                     }
@@ -696,12 +904,13 @@ internal class StockListPage : BasePager() {
                 // 分隔线
                 View {
                     attr {
-                        height(0.5f)
-                        backgroundColor(Color(0xFFEEEEEE))
+                        height(1f)
+                        backgroundColor(Color(0xFFEBEBEB))
                     }
                 }
                 event {
                     click { ctx.openDetail(quote) }
+                    longPress { ctx.longPressTarget = quote }
                 }
             }
         }

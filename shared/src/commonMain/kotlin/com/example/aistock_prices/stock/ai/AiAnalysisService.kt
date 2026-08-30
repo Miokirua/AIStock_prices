@@ -76,12 +76,13 @@ object AiAnalysisService {
         sp.setItem(KEY_PRESETS, JSONObject().apply { put("list", arr) }.toString())
     }
 
-    /** 保存配置时自动以模型名创建/更新预设（同 baseUrl+apiKey 则更新） */
-    fun upsertPreset(sp: SharedPreferencesModule, config: AiConfig) {
+    /** 保存配置时自动以模型名创建/更新预设（同 baseUrl+apiKey 则更新；可指定预设名） */
+    fun upsertPreset(sp: SharedPreferencesModule, config: AiConfig, name: String? = null) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.baseUrl == config.baseUrl && it.apiKey == config.apiKey }
         val preset = AiPreset(
-            name = config.model.trim().ifBlank { "未命名" },
+            name = name?.trim()?.takeIf { it.isNotBlank() }
+                ?: config.model.trim().ifBlank { "未命名" },
             baseUrl = config.baseUrl.trim(),
             apiKey = config.apiKey.trim(),
             model = config.model.trim()
@@ -98,6 +99,19 @@ object AiAnalysisService {
         savePresets(sp, list)
     }
 
+    /** 更新指定预设（按预设名匹配；保存后同样写入当前生效配置） */
+    fun updatePreset(sp: SharedPreferencesModule, oldName: String, newPreset: AiPreset) {
+        val list = loadPresets(sp).toMutableList()
+        val idx = list.indexOfFirst { it.name == oldName }
+        if (idx >= 0) {
+            list[idx] = newPreset
+        } else {
+            list.add(newPreset)
+        }
+        savePresets(sp, list)
+        saveConfig(sp, AiConfig(newPreset.baseUrl, newPreset.apiKey, newPreset.model))
+    }
+
     // ==================== 自动读取模型 ====================
 
     /** 从 baseUrl 推导 models 接口地址（兼容用户粘贴完整 chat/completions 地址） */
@@ -109,33 +123,50 @@ object AiAnalysisService {
         return url + "/models"
     }
 
+    /** 从 baseUrl 推导 chat/completions 接口地址（兼容用户只填 v1 根地址） */
+    fun chatUrl(base: String): String {
+        var url = base.trim().trimEnd('/')
+        if (!url.endsWith("/chat/completions")) {
+            url += "/chat/completions"
+        }
+        return url
+    }
+
     /**
      * 调用 GET {base}/models 自动读取可用模型列表。
-     * 失败或无结果时回调空列表。
+     * 回调参数：(模型列表, 错误信息)；成功时错误信息为 null，失败时携带可读原因（HTTP 状态码/网络错误/格式不符）。
      */
     fun fetchModels(
         network: NetworkModule,
         baseUrl: String,
         apiKey: String,
-        callback: (List<String>) -> Unit
+        callback: (List<String>, String?) -> Unit
     ) {
         val url = modelsUrl(baseUrl)
         val headers = JSONObject().apply {
             put("Content-Type", "application/json")
             put("Authorization", "Bearer $apiKey")
         }
-        network.httpRequest(url, false, JSONObject(), headers, null, 30) { data, success, _, _ ->
+        network.httpRequest(url, false, JSONObject(), headers, null, 30) { data, success, errorMsg, response ->
             if (!success) {
-                callback(emptyList())
+                val status = response.statusCode
+                val msg = when {
+                    status != null && status > 0 -> "HTTP $status" + if (errorMsg.isNotBlank()) "：$errorMsg" else ""
+                    errorMsg.isNotBlank() -> errorMsg
+                    else -> "网络请求失败（可能无法连接服务器）"
+                }
+                callback(emptyList(), msg)
                 return@httpRequest
             }
             val arr = data.optJSONArray("data")
             if (arr == null) {
-                callback(emptyList())
+                val raw = data.toString().replace("\n", " ").take(100)
+                callback(emptyList(), "响应格式非 OpenAI 兼容（缺少 data 数组）：$raw")
                 return@httpRequest
             }
             val models = (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("id") }
-            callback(models)
+            if (models.isEmpty()) callback(emptyList(), "服务端返回的模型列表为空")
+            else callback(models, null)
         }
     }
 
@@ -158,7 +189,7 @@ object AiAnalysisService {
             put("Content-Type", "application/json")
             put("Authorization", "Bearer ${config.apiKey}")
         }
-        network.httpRequest(config.baseUrl, true, body, headers, null, 60) { data, success, _, _ ->
+        network.httpRequest(chatUrl(config.baseUrl), true, body, headers, null, 60) { data, success, _, _ ->
             if (!success) {
                 callback(localFallback(quote, kline))
                 return@httpRequest

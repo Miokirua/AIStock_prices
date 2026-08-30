@@ -6,7 +6,7 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 /**
  * 行情数据仓储：基于腾讯免费行情接口（HTTPS）。
  *
- * - 实时行情：https://qt.gtimg.cn/q=sh600519,sz000001 （非 JSON 文本，~ 分隔，字段见 parseQuote）
+ * - 实时行情：https://qt.gtimg.cn/utf8/q=sh600519,sz000001 （非 JSON 文本，~ 分隔，字段见 parseQuote；utf8 路径返回 UTF-8，中文名称不乱码）
  * - 分时数据：https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600519 （JSON）
  * - 日K线：  https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,60,qfq （JSON）
  *
@@ -14,7 +14,7 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
  */
 object StockRepository {
 
-    private const val QUOTE_URL = "https://qt.gtimg.cn/q="
+    private const val QUOTE_URL = "https://qt.gtimg.cn/utf8/q="
     private const val MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
     private const val KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
@@ -105,9 +105,11 @@ object StockRepository {
         fun d(i: Int): Double = f.getOrNull(i)?.trim()?.toDoubleOrNull() ?: 0.0
         fun l(i: Int): Long = d(i).toLong()
 
+        // utf8 接口下中文名可正常解析；异常时兜底为本地映射/代码
+        val name = f.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() } ?: Watchlist.nameOf(code)
         return StockQuote(
             code = code,
-            name = Watchlist.nameOf(code),
+            name = name,
             price = d(3),
             prevClose = d(4),
             open = d(5),
