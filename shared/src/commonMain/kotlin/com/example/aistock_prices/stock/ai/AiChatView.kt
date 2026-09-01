@@ -59,6 +59,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var pendingDeleteConv by observable<Conversation?>(null)
     /** 股票卡片行情/分时就绪后自增，触发卡片重绘 */
     private var quoteTick by observable(0)
+    /** 外部刷新信号（如从设置页返回）：自增触发 body 重跑，重新求值 isConfigured() 等 SP 依赖 */
+    private var refreshTick by observable(0)
 
     private var chatInputRef: ViewRef<InputView>? = null
     /** code -> 行情（null=尚未加载成功） */
@@ -111,6 +113,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
+    /**
+     * 外部刷新入口（页面重新出现时调用）：
+     * 重新加载会话并触发 body 重跑，使 SP 依赖（如 isConfigured）重新求值。
+     */
+    fun reload() {
+        refreshTick++
+        reloadConversations()
+    }
+
     private fun isConfigured(): Boolean = AiAnalysisService.loadConfig(sp).isConfigured
 
     override fun body(): ViewBuilder {
@@ -120,6 +131,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 flex(1f)
                 backgroundColor(StockColors.BG_PAGE)
             }
+            ctx.refreshTick // 建立响应式依赖：外部 reload() 后整体重跑（重新读取 SP 配置等）
             // ---------- 会话栏 ----------
             ctx.convHeader().invoke(this)
             // ---------- 消息区 / 未配置引导 ----------

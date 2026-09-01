@@ -2,6 +2,7 @@ package com.example.aistock_prices.stock.ai
 
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
+import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ui.StockColors
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
@@ -41,7 +42,17 @@ internal class AiChatPage : BasePager() {
         val code = pagerData.params.optString("code")
         val name = pagerData.params.optString("name", "该股票")
         if (code.isNotBlank()) {
-            chatView?.initForStock(code, name, autoSend = true)
+            // 注意：body() 先于 viewDidLoad() 执行（Pager.didInit 内 created -> body -> viewDidLoad），
+            // chatView 已就绪；额外延迟一拍确保视图树稳定后再初始化该股会话并自动发问。
+            setTimeout(200) {
+                chatView?.initForStock(code, name, autoSend = true)
+            }
         }
+    }
+
+    /** 页面每次出现（含从 AI 设置页返回）时刷新：重新读取 SP 配置并触发视图重跑 */
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        chatView?.reload()
     }
 }

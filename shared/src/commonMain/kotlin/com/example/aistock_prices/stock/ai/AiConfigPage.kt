@@ -13,6 +13,8 @@ import com.tencent.kuikly.core.base.ViewBuilder
 @Page("ai_config", supportInLocal = true)
 internal class AiConfigPage : BasePager() {
 
+    private var configView: AiConfigView? = null
+
     override fun body(): ViewBuilder {
         val ctx = this
         return {
@@ -29,8 +31,14 @@ internal class AiConfigPage : BasePager() {
             }
 
             AiConfigView {
-                // 保存/编辑动作已迁移至 preset_detail 页，本页仅展示列表
+                ctx.configView = this
             }
         }
+    }
+
+    /** 页面每次出现（含从预设详情页保存返回）时刷新预设列表 */
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        configView?.reload()
     }
 }

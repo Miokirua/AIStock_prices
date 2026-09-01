@@ -371,6 +371,11 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
         reloadPresets()
     }
 
+    /** 外部刷新入口（页面重新出现时调用）：从 SP 重载预设列表 */
+    fun reload() {
+        reloadPresets()
+    }
+
     /** 启用/停用预设：启用时立即设为当前生效配置 */
     private fun togglePreset(preset: AiPreset, enabled: Boolean) {
         AiAnalysisService.setPresetEnabled(sp, preset.name, enabled)

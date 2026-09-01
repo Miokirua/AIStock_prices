@@ -64,6 +64,8 @@ internal class StockListPage : BasePager() {
     private var addInputRef: ViewRef<InputView>? = null
     private var refreshRef: ViewRef<RefreshView>? = null
     private var pollTimerRef = ""
+    /** AI 问答 Tab 的内联视图引用（设置页返回时刷新配置态） */
+    private var chatView: AiChatView? = null
 
     /** 左滑操作条宽度（置顶 72f + 删除 72f） */
     private val actionWidth = 144f
@@ -249,6 +251,7 @@ internal class StockListPage : BasePager() {
             // ---------- 内容区：AI 问答 Tab（内联，切 Tab 对话不丢） ----------
             vif({ ctx.currentTab == 1 }) {
                 AiChatView {
+                    ctx.chatView = this
                     event {
                         onOpenResult = { convId, msgTs ->
                             val pageData = JSONObject().apply {
@@ -492,10 +495,13 @@ internal class StockListPage : BasePager() {
         loadData()
     }
 
-    /** 页面每次出现：开始 60 秒轮询刷新 */
+    /** 页面每次出现：开始 60 秒轮询刷新；AI 问答 Tab 激活时刷新配置态（从设置页返回） */
     override fun pageDidAppear() {
         super.pageDidAppear()
         startPolling()
+        if (currentTab == 1) {
+            chatView?.reload()
+        }
     }
 
     override fun pageDidDisappear() {
