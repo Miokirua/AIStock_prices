@@ -434,9 +434,11 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 }
                 if (msg.role == "user") {
                     // 用户气泡：右对齐纯文本
+                    // 注：Kuikly 的 maxWidth 在 flex 容器内对 Text 不可靠（Text 按内容测量撑开），
+                    // 需用固定 width 强制换行，避免长消息溢出屏幕。
                     View {
                         attr {
-                            maxWidth(ctx.pagerData.pageViewWidth - 80f)
+                            width(ctx.pagerData.pageViewWidth - 80f)
                             borderRadius(12f)
                             padding(12f)
                             backgroundColor(StockColors.ACCENT)
@@ -614,23 +616,34 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     View {
                         attr {
                             flexDirectionRow()
-                            alignItemsFlexEnd()
+                            alignItemsCenter()
                             marginTop(6f)
                         }
+                        // 价格：大字号加粗，固定预留宽度并给后续涨跌幅留出间距，
+                        // 避免加粗字宽溢出盖住后面的小字号文字（"数字重叠"现象）
                         Text {
                             attr {
+                                width(110f)
                                 text(StockFormat.price(qq.price))
                                 fontSize(22f)
                                 fontWeightBold()
                                 color(c)
                             }
                         }
-                        Text {
+                        View {
                             attr {
-                                text("  ${StockFormat.change(qq.change)}  ${StockFormat.percent(qq.changePercent)}")
-                                fontSize(13f)
-                                color(c)
-                                marginBottom(3f)
+                                flex(1f)
+                                flexDirectionRow()
+                                alignItemsFlexEnd()
+                                paddingBottom(3f)
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("${StockFormat.change(qq.change)}  ${StockFormat.percent(qq.changePercent)}")
+                                    fontSize(13f)
+                                    color(c)
+                                }
                             }
                         }
                     }
