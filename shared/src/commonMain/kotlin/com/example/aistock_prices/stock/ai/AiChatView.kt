@@ -1,13 +1,9 @@
 package com.example.aistock_prices.stock.ai
 
-import com.example.aistock_prices.stock.data.MinutePoint
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
 import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
-import com.example.kuiklychart.chart.base.ChartDataPoint
-import com.example.kuiklychart.chart.base.ChartDataSet
-import com.example.kuiklychart.chart.line.LineChart
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
@@ -34,6 +30,7 @@ import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.Modal
 import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuiklybase.KuiklyMarkdown
@@ -44,7 +41,7 @@ import com.tencent.kuiklybase.config.MarkdownConfig
  *
  * 能力：
  * - 多会话：切换 / 新建 / 删除（删除弹确认框），会话跨启动持久化（SP）
- * - AI 回复：整体返回 + 加载动画；Markdown 渲染 + ```stock 标记的实时行情卡片 + 迷你分时图
+ * - AI 回复：整体返回 + 加载动画；Markdown 渲染 + ```stock 标记的实时行情卡片
  * - 未配置 API：引导卡片 + 「去设置」跳转
  * - 股票卡片点击进个股详情；含股票标记的消息底部提供「查看完整分析」进结果详情页
  */
@@ -74,10 +71,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var refreshTick by observable(0)
 
     private var chatInputRef: ViewRef<InputView>? = null
+    /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
+    private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     /** code -> 行情（null=尚未加载成功） */
     private val cardQuotes = mutableMapOf<String, StockQuote?>()
-    /** code -> 分时数据 */
-    private val cardMinutes = mutableMapOf<String, List<MinutePoint>>()
     private val fetching = mutableSetOf<String>()
 
     override fun createAttr(): AiChatViewAttr = AiChatViewAttr()
@@ -106,6 +103,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         val saved = sp.getItem(KEY_ACTIVE_ID)
         if (saved.isNotBlank() && conversations.any { it.id == saved }) activeId = saved
         if (activeId.isBlank() && conversations.isNotEmpty()) activeId = conversations.first().id
+        // 进入页面：等列表布局完成后滚动到底端
+        scrollToBottom(animated = false)
+    }
+
+    /** 消息列表滚动到底端（延迟一拍等内容布局完成；offsetY 传大值由平台 clamp） */
+    private fun scrollToBottom(animated: Boolean = true) {
+        setTimeout(pagerId, 80) {
+            chatScrollerRef?.view?.setContentOffset(0f, 100000f, animated)
+        }
     }
 
     /** 外部（ai_chat 独立页）初始化：切换到指定股票会话；autoSend 时自动发问 */
@@ -114,6 +120,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
         reloadConversations()
+        scrollToBottom(animated = false)
         if (autoSend && !sending) {
             val last = conv.messages.lastOrNull()
             val alreadyAutoAsked = last?.role == "user" && last.content.startsWith("帮我分析")
@@ -131,6 +138,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     fun reload() {
         refreshTick++
         reloadConversations()
+        scrollToBottom(animated = false)
     }
 
     private fun isConfigured(): Boolean = AiAnalysisService.loadConfig(sp).isConfigured
@@ -168,7 +176,19 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             vif({ ctx.pendingDeleteConv != null }) {
                 ctx.deleteModal().invoke(this)
             }
-            // 消息操作悬浮菜单：渲染在消息行内部（贴近 ⋮ 按钮），不占全屏弹窗
+            // ---------- 消息操作菜单：全屏遮罩（zIndex 149，低于菜单卡片 150），点击任意非菜单区域关闭 ----------
+            vif({ ctx.pendingMenuMsgTs != null }) {
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        zIndex(149)
+                        backgroundColor(Color(0x0A000000))
+                    }
+                    event {
+                        click { ctx.pendingMenuMsgTs = null }
+                    }
+                }
+            }
         }
     }
 
@@ -409,7 +429,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         sp.setItem(KEY_ACTIVE_ID, conv.id)
         showConvPanel = false
         pendingMenuMsgTs = null
-        setTimeout(pagerId, 50) { reloadConversations() }
+        setTimeout(pagerId, 50) {
+            reloadConversations()
+            scrollToBottom(animated = false)
+        }
     }
 
     // ==================== 消息列表 ====================
@@ -418,6 +441,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         val ctx = this
         return {
             Scroller {
+                ref { ctx.chatScrollerRef = it }
                 attr {
                     flex(1f)
                     showScrollerIndicator(false)
@@ -530,7 +554,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
-                // ⋮ 菜单触发器 + 悬浮菜单（inline 贴近 ⋮ 按钮，非全屏弹窗）
+                // ⋮ 菜单触发器
                 View {
                     attr {
                         flexDirectionRow()
@@ -557,50 +581,34 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             click { ctx.pendingMenuMsgTs = msg.ts }
                         }
                     }
-                    // 该消息菜单打开时：行内遮罩 + 悬浮操作卡片
-                    vif({ ctx.pendingMenuMsgTs == msg.ts }) {
-                        // 行内遮罩：覆盖整条消息行，点击关闭（absolute 不占布局）
-                        View {
-                            attr {
-                                absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                                zIndex(150)
-                                backgroundColor(Color(0x0A000000))
-                            }
-                            event {
-                                click { ctx.pendingMenuMsgTs = null }
-                            }
+                }
+                // 该消息菜单打开时：操作卡片（inline 展开在消息行内，跟随消息对齐方向；点击外部由 body 全屏遮罩关闭）
+                vif({ ctx.pendingMenuMsgTs == msg.ts }) {
+                    View {
+                        attr {
+                            zIndex(150)
+                            marginTop(2f)
+                            borderRadius(10f)
+                            backgroundColor(Color.WHITE)
+                            border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                            padding(4f)
+                            flexDirectionColumn()
                         }
-                        // 悬浮菜单卡片：白色圆角小卡，贴 ⋮ 按钮一侧（只锚定 bottom+单侧，宽度按内容自适应）
-                        View {
-                            attr {
-                                if (msg.role == "user") {
-                                    absolutePosition(bottom = 4f, right = 26f)
-                                } else {
-                                    absolutePosition(bottom = 4f, left = 26f)
-                                }
-                                zIndex(151)
-                                borderRadius(10f)
-                                backgroundColor(Color.WHITE)
-                                border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
-                                padding(4f)
-                                flexDirectionColumn()
+                        if (msg.role == "user") {
+                            // 用户消息：修改（铅笔）、删除（垃圾桶）
+                            ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
+                                ctx.startEditUserMessage(msg.ts)
                             }
-                            if (msg.role == "user") {
-                                // 用户消息：修改（铅笔）、删除（垃圾桶）
-                                ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
-                                    ctx.startEditUserMessage(msg.ts)
-                                }
-                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
-                                    ctx.deleteMessage(msg.ts)
-                                }
-                            } else {
-                                // AI 消息：重新生成（循环）、删除（垃圾桶）
-                                ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
-                                    ctx.regenerateMessage(msg.ts)
-                                }
-                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
-                                    ctx.deleteMessage(msg.ts)
-                                }
+                            ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                ctx.deleteMessage(msg.ts)
+                            }
+                        } else {
+                            // AI 消息：重新生成（循环）、删除（垃圾桶）
+                            ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
+                                ctx.regenerateMessage(msg.ts)
+                            }
+                            ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                ctx.deleteMessage(msg.ts)
                             }
                         }
                     }
@@ -642,31 +650,6 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             color(StockColors.TEXT_SUB)
                         }
                     }
-                    // 停止生成按钮：生成期间始终可见，点击立即中断
-                    View {
-                        attr {
-                            marginLeft(12f)
-                            height(26f)
-                            paddingLeft(10f)
-                            paddingRight(10f)
-                            borderRadius(13f)
-                            allCenter()
-                            flexDirectionRow()
-                            alignItemsCenter()
-                            backgroundColor(Color(0xFFE53935))
-                        }
-                        Text {
-                            attr {
-                                text("■ 停止")
-                                fontSize(11f)
-                                color(Color.WHITE)
-                                fontWeightSemiBold()
-                            }
-                        }
-                        event {
-                            click { ctx.stopGenerating() }
-                        }
-                    }
                 }
             }
         }
@@ -697,7 +680,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    // ==================== 股票卡片（实时行情 + 迷你分时图） ====================
+    // ==================== 股票卡片（实时行情） ====================
 
     private fun stockCard(code: String, name: String): ViewBuilder {
         val ctx = this
@@ -777,40 +760,6 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             }
                         }
                     }
-                    // 迷你分时图
-                    vif({ ctx.cardMinutes[code]?.size ?: 0 > 1 }) {
-                        val points = ctx.cardMinutes[code]!!
-                        val width = ctx.pagerData.pageViewWidth - 96f
-                        LineChart {
-                            attr {
-                                width(width)
-                                height(64f)
-                                marginTop(10f)
-                                dataSets = listOf(
-                                    ChartDataSet(
-                                        points = points.map { ChartDataPoint(it.price.toFloat()) },
-                                        label = "分时",
-                                        color = StockColors.ofChange(
-                                            (qq.price) - (ctx.quotePrevClose(code, points))
-                                        )
-                                    )
-                                )
-                                xAxis {
-                                    labels = emptyList()
-                                    showGridLines = false
-                                }
-                                yAxis {
-                                    min = ctx.minuteRangeOf(points, ctx.quotePrevClose(code, points)).first
-                                    max = ctx.minuteRangeOf(points, ctx.quotePrevClose(code, points)).second
-                                    showGridLines = false
-                                }
-                                smooth = true
-                                lineWidth = 1.4f
-                                showDots = false
-                                fillArea = true
-                            }
-                        }
-                    }
                 }
                 velse {
                     View {
@@ -841,43 +790,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    private fun quotePrevClose(code: String, points: List<MinutePoint>): Double =
-        cardQuotes[code]?.prevClose ?: points.firstOrNull()?.price ?: 0.0
-
-    private fun minuteRangeOf(points: List<MinutePoint>, prevClose: Double): Pair<Float, Float> {
-        var minV = points.minOfOrNull { it.price } ?: prevClose
-        var maxV = points.maxOfOrNull { it.price } ?: prevClose
-        minV = minOf(minV, prevClose)
-        maxV = maxOf(maxV, prevClose)
-        if (maxV <= minV) {
-            minV -= 0.1
-            maxV += 0.1
-        }
-        val pad = (maxV - minV) * 0.08f
-        return Pair((minV - pad).toFloat(), (maxV + pad).toFloat())
-    }
-
-    /** 拉取卡片行情与分时（每个 code 仅拉一次；已缓存则直接复用） */
+    /** 拉取卡片行情（每个 code 仅拉一次；已缓存则直接复用） */
     private fun ensureCardData(code: String, name: String) {
         if (code.isBlank() || code in fetching) return
-        val hasQuote = cardQuotes[code] != null
-        val hasMinute = cardMinutes[code]?.isNotEmpty() == true
-        if (hasQuote && hasMinute) return
+        if (cardQuotes[code] != null) return
         fetching.add(code)
-        if (!hasQuote) {
-            StockRepository.fetchQuotes(network, listOf(code)) { list ->
-                cardQuotes[code] = list.firstOrNull()
-                quoteTick++
-                fetching.remove(code)
-            }
-        }
-        if (!hasMinute) {
-            StockRepository.fetchMinute(network, code) { points ->
-                if (points.isNotEmpty()) {
-                    cardMinutes[code] = points
-                    quoteTick++
-                }
-            }
+        StockRepository.fetchQuotes(network, listOf(code)) { list ->
+            cardQuotes[code] = list.firstOrNull()
+            quoteTick++
+            fetching.remove(code)
         }
     }
 
@@ -935,9 +856,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
-                // 发送按钮：双形态（vif/velse 依赖 ctx.sending，生成中切换为红色停止按钮）
-                // - 正常态：主题色「发送」（修改模式为「替换」）
-                // - sending 中：红色「■ 停止」，点击中断当前生成
+                // 发送/停止按钮：双形态（vif/velse 依赖 ctx.sending）
+                // - 正常态：主题色圆形「发送」（修改模式为「替换」）
+                // - sending 中：红色圆形停止按钮（中间白色方块图标，无文字），点击中断当前生成
                 vif({ !ctx.sending }) {
                     View {
                         attr {
@@ -965,20 +886,19 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     View {
                         attr {
                             marginLeft(10f)
-                            width(58f)
+                            width(40f)
                             height(40f)
                             borderRadius(20f)
                             allCenter()
-                            flexDirectionRow()
-                            alignItemsCenter()
                             backgroundColor(Color(0xFFE53935))
                         }
-                        Text {
+                        // 停止图标：白色方块（无文字）
+                        View {
                             attr {
-                                text("■ 停止")
-                                fontSize(14f)
-                                color(Color.WHITE)
-                                fontWeightSemiBold()
+                                width(14f)
+                                height(14f)
+                                borderRadius(2f)
+                                backgroundColor(Color.WHITE)
                             }
                         }
                         event {
@@ -1072,7 +992,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     }
                     Text {
                         attr {
-                            text("尚未配置 AI 服务。配置后可以在这里与 AI 多轮讨论股票、指数，回复支持 Markdown、实时行情卡片与迷你走势图。")
+                            text("尚未配置 AI 服务。配置后可以在这里与 AI 多轮讨论股票、指数，回复支持 Markdown 与实时行情卡片。")
                             fontSize(13f)
                             color(StockColors.TEXT_SUB)
                             lineHeight(20f)
@@ -1288,6 +1208,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         )
         ConversationStore.update(sp, updated)
         reloadConversations()
+        scrollToBottom()
         // 公共 chat 逻辑（chatSeq 竞态保护）
         callChat(updated, updated.messages)
     }
@@ -1314,6 +1235,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             }
             ConversationStore.update(sp, nowConv.copy(messages = nowConv.messages + reply))
             reloadConversations()
+            scrollToBottom()
         }
     }
 
@@ -1372,6 +1294,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         chatInputRef?.view?.setText("")
         inputText = ""
         reloadConversations()
+        scrollToBottom()
         // 重新发问（chatSeq 竞态保护）
         sending = true
         callChat(updated, updated.messages)
@@ -1399,6 +1322,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         ConversationStore.update(sp, updated)
         pendingMenuMsgTs = null
         reloadConversations()
+        scrollToBottom()
         // 用 kept 作为 history 重新调 chat（chatSeq 竞态保护）
         sending = true
         callChat(updated, updated.messages)

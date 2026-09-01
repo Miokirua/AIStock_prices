@@ -378,6 +378,12 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
 
     /** 启用/停用预设：启用时自动关闭其他预设并设为当前生效配置（互斥） */
     private fun togglePreset(preset: AiPreset, enabled: Boolean) {
+        // 连接失败的预设不允许启用（Service 层也有防护，这里拦截并提示）
+        if (enabled && preset.failed) {
+            reloadPresets()
+            bridgeToast("连接失败的预设无法启用，请先编辑修正配置")
+            return
+        }
         AiAnalysisService.setPresetEnabled(sp, preset.name, enabled)
         reloadPresets()
         if (enabled) {

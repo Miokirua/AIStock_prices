@@ -89,8 +89,11 @@ object AiAnalysisService {
         sp.setItem(KEY_PRESETS, JSONObject().apply { put("list", arr) }.toString())
     }
 
-    /** 保存配置时自动以模型名创建/更新预设（同 baseUrl+apiKey 则更新；可指定预设名） */
-    fun upsertPreset(sp: SharedPreferencesModule, config: AiConfig, name: String? = null) {
+    /**
+     * 保存配置时自动以模型名创建/更新预设（同 baseUrl+apiKey 则更新；可指定预设名）。
+     * @param enabled 是否启用该预设（连接成功才应传 true；false 时不设为当前生效配置）
+     */
+    fun upsertPreset(sp: SharedPreferencesModule, config: AiConfig, name: String? = null, enabled: Boolean = true) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.baseUrl == config.baseUrl && it.apiKey == config.apiKey }
         val preset = AiPreset(
@@ -98,13 +101,17 @@ object AiAnalysisService {
                 ?: config.model.trim().ifBlank { "未命名" },
             baseUrl = config.baseUrl.trim(),
             apiKey = config.apiKey.trim(),
-            model = config.model.trim()
+            model = config.model.trim(),
+            enabled = enabled
         )
         if (idx >= 0) list[idx] = preset else list.add(preset)
         // 互斥：新预设启用时关闭其他所有预设（保证同时最多一个开启）
-        disableOtherEnabled(list, preset.name)
+        if (enabled) disableOtherEnabled(list, preset.name)
         savePresets(sp, list)
-        setActivePreset(sp, preset.name)
+        if (enabled) {
+            saveConfig(sp, AiConfig(preset.baseUrl, preset.apiKey, preset.model))
+            setActivePreset(sp, preset.name)
+        }
     }
 
     /** 删除预设；若删除的是当前生效预设则同步清除生效标记 */
@@ -118,10 +125,23 @@ object AiAnalysisService {
         }
     }
 
-    /** 更新指定预设（按预设名匹配；保存后同样写入当前生效配置并标记生效） */
+    /**
+     * 更新指定预设（按预设名匹配）。
+     * 连接失败（failed）的预设不允许启用：强制 enabled=false、不写入当前生效配置，
+     * 若原本是当前生效则清除标记。
+     */
     fun updatePreset(sp: SharedPreferencesModule, oldName: String, newPreset: AiPreset) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.name == oldName }
+        if (newPreset.failed) {
+            val saved = newPreset.copy(enabled = false)
+            if (idx >= 0) list[idx] = saved else list.add(saved)
+            savePresets(sp, list)
+            if (activePresetName(sp) == oldName || activePresetName(sp) == saved.name) {
+                setActivePreset(sp, "")
+            }
+            return
+        }
         if (idx >= 0) {
             list[idx] = newPreset
         } else {
@@ -150,6 +170,8 @@ object AiAnalysisService {
         val idx = list.indexOfFirst { it.name == name }
         if (idx < 0) return
         val p = list[idx]
+        // 连接失败的预设不允许启用
+        if (enabled && p.failed) return
         if (enabled) {
             // 互斥：开启当前预设，同时关闭其他全部预设
             disableOtherEnabled(list, name)
@@ -166,12 +188,20 @@ object AiAnalysisService {
         }
     }
 
-    /** 标记预设连接校验失败（true=标红；false=清除标红） */
+    /**
+     * 标记预设连接校验失败（true=标红；false=清除标红）。
+     * 连接失败时强制停用该预设并清除「当前生效」标记（失败配置不能作为生效配置）。
+     */
     fun setPresetFailed(sp: SharedPreferencesModule, name: String, failed: Boolean) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.name == name }
         if (idx < 0) return
-        list[idx] = list[idx].copy(failed = failed)
+        if (failed) {
+            list[idx] = list[idx].copy(failed = true, enabled = false)
+            if (activePresetName(sp) == name) setActivePreset(sp, "")
+        } else {
+            list[idx] = list[idx].copy(failed = false)
+        }
         savePresets(sp, list)
     }
 

@@ -307,7 +307,7 @@ internal class PresetDetailPage : BasePager() {
         }
     }
 
-    /** 保存：先校验格式，再自动校验连接；失败则保存并标红该预设 */
+    /** 保存：先校验格式，再自动校验连接；成功才启用该预设，失败则保存并标红但不启用 */
     private fun save() {
         if (saving) return
         val url = baseUrl.trim()
@@ -330,11 +330,12 @@ internal class PresetDetailPage : BasePager() {
         saving = true
         AiAnalysisService.testConnection(network, url, key) { ok, err ->
             saving = false
-            val newPreset = AiPreset(nm, url, key, mdl, enabled = true, failed = !ok)
+            // 连接成功才启用（failed 预设强制不启用，与列表开关互斥逻辑一致）
+            val newPreset = AiPreset(nm, url, key, mdl, enabled = ok, failed = !ok)
             if (edit.isNotBlank()) {
                 AiAnalysisService.updatePreset(sp, edit, newPreset)
             } else {
-                AiAnalysisService.upsertPreset(sp, AiConfig(url, key, mdl), nm)
+                AiAnalysisService.upsertPreset(sp, AiConfig(url, key, mdl), nm, enabled = ok)
                 AiAnalysisService.setPresetFailed(sp, nm, !ok)
             }
             if (ok) {
