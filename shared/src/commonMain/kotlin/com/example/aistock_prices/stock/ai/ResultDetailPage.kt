@@ -202,23 +202,33 @@ internal class ResultDetailPage : BasePager() {
                     View {
                         attr {
                             flexDirectionRow()
-                            alignItemsFlexEnd()
+                            alignItemsCenter()
                             marginTop(8f)
                         }
+                        // 价格：32f 加粗大字号，固定预留宽度避免溢出盖住涨跌幅
                         Text {
                             attr {
+                                width(140f)
                                 text(StockFormat.price(q.price))
                                 fontSize(32f)
                                 fontWeightBold()
                                 color(c)
                             }
                         }
-                        Text {
+                        View {
                             attr {
-                                text("  ${StockFormat.change(q.change)}  ${StockFormat.percent(q.changePercent)}")
-                                fontSize(14f)
-                                color(c)
-                                marginBottom(5f)
+                                flex(1f)
+                                flexDirectionRow()
+                                alignItemsFlexEnd()
+                                paddingBottom(5f)
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("${StockFormat.change(q.change)}  ${StockFormat.percent(q.changePercent)}")
+                                    fontSize(14f)
+                                    color(c)
+                                }
                             }
                         }
                     }

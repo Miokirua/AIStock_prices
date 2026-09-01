@@ -445,25 +445,35 @@ internal class StockDetailPage : BasePager() {
                     View {
                         attr {
                             flexDirectionRow()
-                            alignItemsFlexEnd()
+                            alignItemsCenter()
                             marginTop(10f)
                         }
+                        // 价格：36f 加粗大字号，固定预留宽度避免溢出盖住涨跌幅
                         Text {
                             attr {
+                                width(160f)
                                 text(StockFormat.price(q.price))
                                 fontSize(36f)
                                 fontWeightBold()
                                 color(c)
                             }
                         }
-                        Text {
+                        View {
                             attr {
-                                text(
-                                    "  ${StockFormat.change(q.change)}  ${StockFormat.percent(q.changePercent)}"
-                                )
-                                fontSize(15f)
-                                color(c)
-                                marginBottom(6f)
+                                flex(1f)
+                                flexDirectionRow()
+                                alignItemsFlexEnd()
+                                paddingBottom(6f)
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text(
+                                        "${StockFormat.change(q.change)}  ${StockFormat.percent(q.changePercent)}"
+                                    )
+                                    fontSize(15f)
+                                    color(c)
+                                }
                             }
                         }
                     }
