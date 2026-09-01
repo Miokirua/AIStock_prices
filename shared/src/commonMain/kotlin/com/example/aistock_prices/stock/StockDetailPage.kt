@@ -1024,7 +1024,7 @@ internal class StockDetailPage : BasePager() {
                     click { ctx.analyze() }
                 }
             }
-            // 更多详情：进入 AI 问答页（该股专属会话）并自动发问
+            // 详细分析：进入 AI 问答页（该股专属会话）并自动发问
             View {
                 attr {
                     marginTop(10f)
@@ -1035,7 +1035,7 @@ internal class StockDetailPage : BasePager() {
                 }
                 Text {
                     attr {
-                        text("更多详情")
+                        text("详细分析")
                         fontSize(14f)
                         color(StockColors.TEXT_SUB)
                     }

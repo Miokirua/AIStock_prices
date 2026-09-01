@@ -21,6 +21,7 @@ import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.layout.FlexAlign
+import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
@@ -56,7 +57,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var showConvPanel by observable(false)
     private var inputText by observable("")
     private var sending by observable(false)
+    /** 当前正在生成的请求是否已被中断；chat 回调据此丢弃结果 */
+    private var cancelled by observable(false)
     private var pendingDeleteConv by observable<Conversation?>(null)
+    /** 当前打开 ⋮ 菜单的消息 ts（null=无菜单） */
+    private var pendingMenuMsgTs by observable<Long?>(null)
+    /** 正在"修改"模式中的用户消息 ts（null=正常输入） */
+    private var editingUserMsgTs by observable<Long?>(null)
     /** 股票卡片行情/分时就绪后自增，触发卡片重绘 */
     private var quoteTick by observable(0)
     /** 外部刷新信号（如从设置页返回）：自增触发 body 重跑，重新求值 isConfigured() 等 SP 依赖 */
@@ -145,6 +152,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             vif({ ctx.isConfigured() }) {
                 ctx.inputBar().invoke(this)
             }
+            // ---------- 修改模式提示条（用户消息点"修改"后显示） ----------
+            vif({ ctx.editingUserMsgTs != null }) {
+                ctx.editBanner().invoke(this)
+            }
             // ---------- 会话面板（下拉覆盖层） ----------
             vif({ ctx.showConvPanel }) {
                 ctx.convPanel().invoke(this)
@@ -152,6 +163,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             // ---------- 删除会话确认弹窗 ----------
             vif({ ctx.pendingDeleteConv != null }) {
                 ctx.deleteModal().invoke(this)
+            }
+            // ---------- 消息操作菜单（删除 / 重新生成 / 修改） ----------
+            vif({ ctx.pendingMenuMsgTs != null }) {
+                ctx.msgMenu().invoke(this)
             }
         }
     }
@@ -513,6 +528,34 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
+                // ⋮ 菜单触发器：贴气泡下方，对齐方向与气泡一致
+                View {
+                    attr {
+                        flexDirectionRow()
+                        justifyContent(if (msg.role == "user") FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
+                        marginTop(2f)
+                        paddingLeft(if (msg.role == "user") 0f else 4f)
+                        paddingRight(if (msg.role == "user") 4f else 0f)
+                    }
+                    View {
+                        attr {
+                            paddingLeft(8f)
+                            paddingRight(8f)
+                            paddingTop(3f)
+                            paddingBottom(3f)
+                        }
+                        Text {
+                            attr {
+                                text("⋮")
+                                fontSize(15f)
+                                color(StockColors.TEXT_SUB)
+                            }
+                        }
+                        event {
+                            click { ctx.pendingMenuMsgTs = msg.ts }
+                        }
+                    }
+                }
             }
         }
     }
@@ -619,11 +662,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             alignItemsCenter()
                             marginTop(6f)
                         }
-                        // 价格：大字号加粗，固定预留宽度并给后续涨跌幅留出间距，
-                        // 避免加粗字宽溢出盖住后面的小字号文字（"数字重叠"现象）
+                        // 价格：大字号加粗，固定宽度 + 右侧留白，杜绝加粗字溢出盖住涨跌幅
                         Text {
                             attr {
-                                width(110f)
+                                width(120f)
                                 text(StockFormat.price(qq.price))
                                 fontSize(22f)
                                 fontWeightBold()
@@ -633,6 +675,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         View {
                             attr {
                                 flex(1f)
+                                marginLeft(10f)
                                 flexDirectionRow()
                                 alignItemsFlexEnd()
                                 paddingBottom(3f)
@@ -763,6 +806,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private fun inputBar(): ViewBuilder {
         val ctx = this
         return {
+            // 建立响应式依赖：sending 状态变化时输入区整体重绘（切换 发送/停止 按钮）
+            val isSending = ctx.sending
             View {
                 attr {
                     flexDirectionRow()
@@ -792,7 +837,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             height(36f)
                             fontSize(14f)
                             color(StockColors.TEXT_MAIN)
-                            placeholder("问问 AI 关于股票的问题...")
+                            placeholder(
+                                if (ctx.editingUserMsgTs != null) "修改消息后发送，将覆盖原对话…"
+                                else "问问 AI 关于股票的问题..."
+                            )
                             placeholderColor(StockColors.TEXT_SUB)
                             maxTextLength(500)
                         }
@@ -801,25 +849,104 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
+                // 发送按钮：双形态
+                // - 正常态：主题色「发送」
+                // - sending 中：红色「停止」，点击中断当前生成
+                if (!isSending) {
+                    View {
+                        attr {
+                            marginLeft(10f)
+                            width(58f)
+                            height(40f)
+                            borderRadius(20f)
+                            allCenter()
+                            backgroundColor(StockColors.ACCENT)
+                        }
+                        Text {
+                            attr {
+                                text(if (ctx.editingUserMsgTs != null) "替换" else "发送")
+                                fontSize(14f)
+                                color(Color.WHITE)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.send() }
+                        }
+                    }
+                } else {
+                    View {
+                        attr {
+                            marginLeft(10f)
+                            width(58f)
+                            height(40f)
+                            borderRadius(20f)
+                            allCenter()
+                            backgroundColor(Color(0xFFE53935))
+                        }
+                        Text {
+                            attr {
+                                text("停止")
+                                fontSize(14f)
+                                color(Color.WHITE)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.stopGenerating() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ==================== 修改模式提示条 ====================
+
+    /** 用户消息点"修改"后显示在输入区上方的提示条，可点取消 */
+    private fun editBanner(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(14f)
+                    paddingRight(8f)
+                    paddingTop(8f)
+                    paddingBottom(8f)
+                    backgroundColor(Color(0xFFFFF7E6))
+                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFFFE7BA)))
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text("✏️ 修改模式：修改后点击「替换」将删除原消息及之后对话并重新生成")
+                        fontSize(12f)
+                        color(Color(0xFFAD6800))
+                        lineHeight(18f)
+                    }
+                }
                 View {
                     attr {
-                        marginLeft(10f)
-                        width(58f)
-                        height(40f)
-                        borderRadius(20f)
-                        allCenter()
-                        backgroundColor(StockColors.ACCENT)
+                        paddingLeft(10f)
+                        paddingRight(10f)
+                        paddingTop(4f)
+                        paddingBottom(4f)
                     }
                     Text {
                         attr {
-                            text("发送")
-                            fontSize(14f)
-                            color(Color.WHITE)
-                            fontWeightSemiBold()
+                            text("取消")
+                            fontSize(12f)
+                            color(StockColors.ACCENT)
                         }
                     }
                     event {
-                        click { ctx.send() }
+                        click {
+                            ctx.editingUserMsgTs = null
+                            ctx.chatInputRef?.view?.setText("")
+                            ctx.inputText = ""
+                        }
                     }
                 }
             }
@@ -1002,6 +1129,184 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
+    // ==================== 消息操作菜单（删除 / 修改 / 重新生成） ====================
+
+    /**
+     * 消息操作弹层。点 ⋮ 后展示，根据当前消息 role 渲染不同操作：
+     * - 用户消息：删除、修改
+     * - AI 消息：删除、重新生成
+     */
+    private fun msgMenu(): ViewBuilder {
+        val ctx = this
+        return {
+            val conv = ctx.activeConv()
+            val ts = ctx.pendingMenuMsgTs
+            val msg = conv?.messages?.firstOrNull { it.ts == ts }
+            Modal {
+                View {
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        backgroundColor(Color(0x66000000))
+                    }
+                    event {
+                        click { ctx.pendingMenuMsgTs = null }
+                    }
+                    // 卡片：根据消息角色决定展示哪些操作
+                    val isUser = msg?.role == "user"
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 80f)
+                            borderRadius(12f)
+                            backgroundColor(Color.WHITE)
+                            padding(16f)
+                            flexDirectionColumn()
+                        }
+                        event {
+                            click { /* 拦截冒泡，避免点菜单卡片关闭弹窗 */ }
+                        }
+                        Text {
+                            attr {
+                                text(if (isUser) "用户消息操作" else "AI 消息操作")
+                                fontSize(14f)
+                                color(StockColors.TEXT_SUB)
+                                marginBottom(10f)
+                            }
+                        }
+                        if (isUser) {
+                            // 修改
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingTop(12f)
+                                    paddingBottom(12f)
+                                    borderRadius(8f)
+                                    backgroundColor(Color(0xFFF5F8FF))
+                                    paddingLeft(14f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("✏️  修改（替换该消息及之后对话并重新生成）")
+                                        fontSize(14f)
+                                        color(StockColors.ACCENT)
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ts?.let { ctx.startEditUserMessage(it) }
+                                    }
+                                }
+                            }
+                            View {
+                                attr { height(8f) }
+                            }
+                            // 删除
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingTop(12f)
+                                    paddingBottom(12f)
+                                    borderRadius(8f)
+                                    backgroundColor(Color(0xFFFFF1F0))
+                                    paddingLeft(14f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("🗑  删除该消息")
+                                        fontSize(14f)
+                                        color(StockColors.UP)
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ts?.let { ctx.deleteMessage(it) }
+                                    }
+                                }
+                            }
+                        } else {
+                            // 重新生成
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingTop(12f)
+                                    paddingBottom(12f)
+                                    borderRadius(8f)
+                                    backgroundColor(Color(0xFFF5F8FF))
+                                    paddingLeft(14f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("🔄  重新生成（删除该回复并重新调用 AI）")
+                                        fontSize(14f)
+                                        color(StockColors.ACCENT)
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ts?.let { ctx.regenerateMessage(it) }
+                                    }
+                                }
+                            }
+                            View {
+                                attr { height(8f) }
+                            }
+                            // 删除
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingTop(12f)
+                                    paddingBottom(12f)
+                                    borderRadius(8f)
+                                    backgroundColor(Color(0xFFFFF1F0))
+                                    paddingLeft(14f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("🗑  删除该消息")
+                                        fontSize(14f)
+                                        color(StockColors.UP)
+                                    }
+                                }
+                                event {
+                                    click {
+                                        ts?.let { ctx.deleteMessage(it) }
+                                    }
+                                }
+                            }
+                        }
+                        View {
+                            attr {
+                                marginTop(12f)
+                                height(36f)
+                                borderRadius(18f)
+                                allCenter()
+                                backgroundColor(Color(0xFFF5F6F8))
+                            }
+                            Text {
+                                attr {
+                                    text("取消")
+                                    fontSize(13f)
+                                    color(StockColors.TEXT_SUB)
+                                }
+                            }
+                            event {
+                                click { ctx.pendingMenuMsgTs = null }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ==================== 发送逻辑 ====================
 
     private fun send() {
@@ -1010,7 +1315,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             bridgeToast("请输入内容")
             return
         }
-        doSend(text)
+        // 修改模式：点发送走 submitEdit（截断到原消息，替换后重新发问）
+        if (editingUserMsgTs != null) {
+            submitEdit(text)
+        } else {
+            doSend(text)
+        }
     }
 
     private fun doSend(text: String) {
@@ -1022,6 +1332,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             return
         }
         sending = true
+        cancelled = false
         chatInputRef?.view?.setText("")
         inputText = ""
         // 追加 user 消息并持久化
@@ -1030,9 +1341,22 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         )
         ConversationStore.update(sp, updated)
         reloadConversations()
-        AiAnalysisService.chat(network, config, updated.messages) { content, err ->
+        // 公共 chat 逻辑（cancelled 标记检查）
+        callChat(updated, updated.messages)
+    }
+
+    /**
+     * 公共 chat 调用：在 sending=true 后异步请求，callback 内检查 [cancelled] 决定是否落库。
+     * 中断时 callback 仍会触发（网络请求无法真正取消），通过 cancelled 标志位丢弃结果。
+     */
+    private fun callChat(conv: Conversation, history: List<ChatMessage>) {
+        val config = AiAnalysisService.loadConfig(sp)
+        AiAnalysisService.chat(network, config, history) { content, err ->
+            // 中断或新一轮已开始：丢弃结果
+            if (cancelled) return@chat
             sending = false
-            val nowConv = ConversationStore.load(sp).firstOrNull { it.id == conv.id } ?: return@chat
+            val nowConv = ConversationStore.load(sp).firstOrNull { it.id == conv.id }
+                ?: return@chat
             val reply = if (err != null) {
                 ChatMessage("assistant", err, System.currentTimeMillis(), error = true)
             } else {
@@ -1041,6 +1365,95 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             ConversationStore.update(sp, nowConv.copy(messages = nowConv.messages + reply))
             reloadConversations()
         }
+    }
+
+    /** 中断生成：设 cancelled=true，callback 内会丢弃结果 */
+    private fun stopGenerating() {
+        if (!sending) return
+        cancelled = true
+        sending = false
+        bridgeToast("已停止生成")
+    }
+
+    /** 删除单条消息并持久化 */
+    private fun deleteMessage(ts: Long) {
+        val conv = activeConv() ?: run {
+            pendingMenuMsgTs = null
+            return
+        }
+        val updated = conv.copy(messages = conv.messages.filter { it.ts != ts })
+        ConversationStore.update(sp, updated)
+        pendingMenuMsgTs = null
+        reloadConversations()
+    }
+
+    /** 启动"修改用户消息"：内容回填输入框，editingUserMsgTs 标记修改对象 */
+    private fun startEditUserMessage(ts: Long) {
+        val conv = activeConv() ?: return
+        val msg = conv.messages.firstOrNull { it.ts == ts && it.role == "user" } ?: return
+        editingUserMsgTs = ts
+        pendingMenuMsgTs = null
+        // 回填输入框
+        chatInputRef?.view?.setText(msg.content)
+        inputText = msg.content
+        bridgeToast("修改后点「替换」将覆盖原对话")
+    }
+
+    /**
+     * 完成修改：截断到原消息（含该消息），追加新用户消息，重新生成 AI 回复。
+     */
+    private fun submitEdit(newText: String) {
+        if (sending) return
+        val ts = editingUserMsgTs ?: return
+        val conv = activeConv() ?: return
+        if (newText.isEmpty()) {
+            bridgeToast("内容不能为空")
+            return
+        }
+        // 找到该消息在 messages 中的索引，截断到该消息之前
+        val idx = conv.messages.indexOfFirst { it.ts == ts }
+        if (idx < 0) return
+        val kept = conv.messages.subList(0, idx).toList()
+        val updated = conv.copy(
+            messages = kept + ChatMessage("user", newText, System.currentTimeMillis())
+        )
+        ConversationStore.update(sp, updated)
+        editingUserMsgTs = null
+        chatInputRef?.view?.setText("")
+        inputText = ""
+        reloadConversations()
+        // 重新发问
+        sending = true
+        cancelled = false
+        callChat(updated, updated.messages)
+    }
+
+    /**
+     * 重新生成 AI 回复：找到该 AI 消息，截断到它之前（不含），用其之前的 history 重新调 chat。
+     * 必须保证该 AI 消息之前有 user 消息（idx > 0）才有意义。
+     */
+    private fun regenerateMessage(ts: Long) {
+        if (sending) return
+        val conv = activeConv() ?: run {
+            pendingMenuMsgTs = null
+            return
+        }
+        val idx = conv.messages.indexOfFirst { it.ts == ts }
+        // 必须存在且前面有消息（否则无可用上下文）
+        if (idx <= 0) {
+            pendingMenuMsgTs = null
+            bridgeToast("无法重新生成：缺少上下文")
+            return
+        }
+        val kept = conv.messages.subList(0, idx).toList()
+        val updated = conv.copy(messages = kept)
+        ConversationStore.update(sp, updated)
+        pendingMenuMsgTs = null
+        reloadConversations()
+        // 用 kept 作为 history 重新调 chat
+        sending = true
+        cancelled = false
+        callChat(updated, updated.messages)
     }
 
     private fun reloadConversations() {

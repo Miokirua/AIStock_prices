@@ -6,9 +6,11 @@ import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ui.StockColors
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.module.RouterModule
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
 /**
- * AI 问答独立页（从个股详情页「更多详情」跳转进入）。
+ * AI 问答独立页（从个股详情页「详细分析」跳转进入）。
  * 复用 [AiChatView]；带 code/name 参数时切换到该股专属会话并自动发问。
  */
 @Page("ai_chat", supportInLocal = true)
@@ -33,6 +35,17 @@ internal class AiChatPage : BasePager() {
 
             AiChatView {
                 ctx.chatView = this
+                // 绑定"查看完整分析"跳转 result_detail 入口（独立路由页与首页内联 Tab 同源）
+                event {
+                    onOpenResult = { convId, msgTs ->
+                        val pageData = JSONObject().apply {
+                            put("convId", convId)
+                            put("msgTs", msgTs)
+                        }
+                        ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME)
+                            .openPage("result_detail", pageData)
+                    }
+                }
             }
         }
     }
