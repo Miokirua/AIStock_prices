@@ -298,7 +298,13 @@ internal class StockDetailPage : BasePager() {
         loading = true
         errorMsg = ""
         // 0. 恢复上次 AI 分析结果（持久化：再次进入直接展示，不重复请求）
-        AiAnalysisService.loadAnalysisResult(sp, stockCode)?.let { aiResult = it }
+        //    同时记录配置签名：与当前配置一致时 checkAutoAnalyze 判定为「无需重分析」
+        val cached = AiAnalysisService.loadAnalysisResult(sp, stockCode)
+        if (cached != null) {
+            aiResult = cached
+            val cfg = loadAiConfig()
+            lastConfigHash = cfg.baseUrl + "|" + cfg.apiKey + "|" + cfg.model
+        }
         // 1. 缓存优先展示（接口临时失效时页面不空白）
         applyCache()
         // 2. 加载超时兜底：8 秒内行情仍未加载出来，则使用本地缓存或提示错误，避免一直空白

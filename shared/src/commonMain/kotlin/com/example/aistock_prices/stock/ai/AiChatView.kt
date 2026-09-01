@@ -701,19 +701,26 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         return Pair((minV - pad).toFloat(), (maxV + pad).toFloat())
     }
 
-    /** 拉取卡片行情与分时（每个 code 仅拉一次） */
+    /** 拉取卡片行情与分时（每个 code 仅拉一次；已缓存则直接复用） */
     private fun ensureCardData(code: String, name: String) {
         if (code.isBlank() || code in fetching) return
+        val hasQuote = cardQuotes[code] != null
+        val hasMinute = cardMinutes[code]?.isNotEmpty() == true
+        if (hasQuote && hasMinute) return
         fetching.add(code)
-        StockRepository.fetchQuotes(network, listOf(code)) { list ->
-            cardQuotes[code] = list.firstOrNull()
-            quoteTick++
-            fetching.remove(code)
-        }
-        StockRepository.fetchMinute(network, code) { points ->
-            if (points.isNotEmpty()) {
-                cardMinutes[code] = points
+        if (!hasQuote) {
+            StockRepository.fetchQuotes(network, listOf(code)) { list ->
+                cardQuotes[code] = list.firstOrNull()
                 quoteTick++
+                fetching.remove(code)
+            }
+        }
+        if (!hasMinute) {
+            StockRepository.fetchMinute(network, code) { points ->
+                if (points.isNotEmpty()) {
+                    cardMinutes[code] = points
+                    quoteTick++
+                }
             }
         }
     }
