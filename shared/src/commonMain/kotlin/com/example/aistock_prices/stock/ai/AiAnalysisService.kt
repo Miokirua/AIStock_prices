@@ -101,6 +101,8 @@ object AiAnalysisService {
             model = config.model.trim()
         )
         if (idx >= 0) list[idx] = preset else list.add(preset)
+        // 互斥：新预设启用时关闭其他所有预设（保证同时最多一个开启）
+        disableOtherEnabled(list, preset.name)
         savePresets(sp, list)
         setActivePreset(sp, preset.name)
     }
@@ -125,88 +127,52 @@ object AiAnalysisService {
         } else {
             list.add(newPreset)
         }
+        // 互斥：更新后的预设若为启用态，关闭其他全部预设
+        if (newPreset.enabled) disableOtherEnabled(list, newPreset.name)
         savePresets(sp, list)
         saveConfig(sp, AiConfig(newPreset.baseUrl, newPreset.apiKey, newPreset.model))
         setActivePreset(sp, newPreset.name)
     }
 
-    /** 切换预设启用状态；启用时将该预设设为当前生效配置，停用时若为当前生效则清除标记 */
+    /**
+     * 互斥保证：将 [keepName] 之外所有已启用的预设置停用，
+     * 使整个列表任何时刻最多只有一个预设处于启用态。
+     */
+    private fun disableOtherEnabled(list: MutableList<AiPreset>, keepName: String) {
+        list.forEachIndexed { i, p ->
+            if (p.name != keepName && p.enabled) list[i] = p.copy(enabled = false)
+        }
+    }
+
+    /** 切换预设启用状态；启用时自动关闭其他预设，并将该预设设为当前生效配置 */
     fun setPresetEnabled(sp: SharedPreferencesModule, name: String, enabled: Boolean) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.name == name }
         if (idx < 0) return
         val p = list[idx]
-        list[idx] = p.copy(enabled = enabled)
-        savePresets(sp, list)
         if (enabled) {
+            // 互斥：开启当前预设，同时关闭其他全部预设
+            disableOtherEnabled(list, name)
+            list[idx] = p.copy(enabled = true)
+            savePresets(sp, list)
             saveConfig(sp, AiConfig(p.baseUrl, p.apiKey, p.model))
             setActivePreset(sp, p.name)
-        } else if (activePresetName(sp) == p.name) {
-            setActivePreset(sp, "")
+        } else {
+            list[idx] = p.copy(enabled = false)
+            savePresets(sp, list)
+            if (activePresetName(sp) == p.name) {
+                setActivePreset(sp, "")
+            }
         }
     }
 
-    /** 标记预设连通性校验失败（true=标红；false=清除标红） */
+    /** 标记预设连接校验失败（true=标红；false=清除标红） */
     fun setPresetFailed(sp: SharedPreferencesModule, name: String, failed: Boolean) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.name == name }
         if (idx < 0) return
         list[idx] = list[idx].copy(failed = failed)
         savePresets(sp, list)
-    }
-
-    // ==================== 分析结果持久化 ====================
-
-    private fun analysisKey(code: String) = "ai_analysis_$code"
-
-    /** 保存个股 AI 分析结果缓存（再次进入详情页直接展示，不重复请求） */
-    fun saveAnalysisResult(sp: SharedPreferencesModule, code: String, result: AiAnalysisResult) {
-        val obj = JSONObject().apply {
-            put("trend", result.trend)
-            put("trendDesc", result.trendDesc)
-            put("suggestion", result.suggestion)
-            put("buyPoints", JSONArray().apply { result.buyPoints.forEach { put(it) } })
-            put("sellPoints", JSONArray().apply { result.sellPoints.forEach { put(it) } })
-            put("risks", JSONArray().apply { result.risks.forEach { put(it) } })
-            put("summary", result.summary)
-            put("riskLevel", result.riskLevel)
-            put("source", result.source)
-            put("ts", System.currentTimeMillis())
-        }
-        sp.setItem(analysisKey(code), obj.toString())
-    }
-
-    /** 读取个股 AI 分析结果缓存；无则 null */
-    fun loadAnalysisResult(sp: SharedPreferencesModule, code: String): AiAnalysisResult? {
-        val raw = sp.getItem(analysisKey(code))
-        if (raw.isBlank()) return null
-        return try {
-            val o = JSONObject(raw)
-            AiAnalysisResult(
-                trend = o.optString("trend", ""),
-                trendDesc = o.optString("trendDesc", ""),
-                suggestion = o.optString("suggestion", ""),
-                buyPoints = o.optJSONArray("buyPoints")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { arr.optString(it) }
-                } ?: emptyList(),
-                sellPoints = o.optJSONArray("sellPoints")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { arr.optString(it) }
-                } ?: emptyList(),
-                risks = o.optJSONArray("risks")?.let { arr ->
-                    (0 until arr.length()).mapNotNull { arr.optString(it) }
-                } ?: emptyList(),
-                summary = o.optString("summary", ""),
-                riskLevel = o.optString("riskLevel", AiAnalysisResult.RISK_MID),
-                source = o.optString("source", AiAnalysisResult.SOURCE_RULE)
-            )
-        } catch (e: Throwable) {
-            null
-        }
-    }
-
-    /** 清除个股 AI 分析结果缓存（供「重新分析」使用时可先清再存） */
-    fun clearAnalysisResult(sp: SharedPreferencesModule, code: String) {
-        sp.setItem(analysisKey(code), "")
     }
 
     // ==================== 自动读取模型 ====================
@@ -268,8 +234,8 @@ object AiAnalysisService {
     }
 
     /**
-     * 连通性测试：请求 {base}/models 判断 URL/Key 是否可用。
-     * 回调：(是否连通, 错误信息)；成功时错误信息为 null。
+     * 连接测试：请求 {base}/models 判断 URL/Key 是否可用。
+     * 回调：(是否连接成功, 错误信息)；成功时错误信息为 null。
      */
     fun testConnection(
         network: NetworkModule,

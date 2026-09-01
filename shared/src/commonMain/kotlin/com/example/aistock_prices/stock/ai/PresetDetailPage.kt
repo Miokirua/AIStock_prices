@@ -31,8 +31,8 @@ import com.tencent.kuikly.core.views.View
  * 预设详情页（新建 / 编辑共用）：
  * - 从 AI 设置列表「新建预设」进入（无 name 参数）或点击预设进入（带 name 参数）
  * - 配置预设名 / Base URL / API Key / 模型
- * - 「连接」按钮测试连通性并拉取可用模型下拉（点选后收起）
- * - 保存时自动校验连通性：失败则保存并标红该预设（列表展示），成功则保存并生效
+ * - 「连接」按钮测试连接并拉取可用模型下拉（点选后收起）
+ * - 保存时自动校验连接：失败则保存并标红该预设（列表展示），成功则保存并生效
  */
 @Page("preset_detail", supportInLocal = true)
 internal class PresetDetailPage : BasePager() {
@@ -244,7 +244,7 @@ internal class PresetDetailPage : BasePager() {
 
                     Text {
                         attr {
-                            text("提示：保存时自动校验连通性，失败会在预设列表中标红。Key 保存在本地明文（shared_prefs），仅用于原型演示。")
+                            text("提示：保存时自动校验连接，失败会在预设列表中标红。Key 保存在本地明文（shared_prefs），仅用于原型演示。")
                             fontSize(12f)
                             color(StockColors.TEXT_SUB)
                             marginTop(12f)
@@ -307,7 +307,7 @@ internal class PresetDetailPage : BasePager() {
         }
     }
 
-    /** 保存：先校验格式，再自动校验连通性；失败则保存并标红该预设 */
+    /** 保存：先校验格式，再自动校验连接；失败则保存并标红该预设 */
     private fun save() {
         if (saving) return
         val url = baseUrl.trim()

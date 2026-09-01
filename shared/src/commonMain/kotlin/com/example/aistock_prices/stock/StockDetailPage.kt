@@ -195,7 +195,7 @@ internal class StockDetailPage : BasePager() {
 
     /**
      * 页面每次出现（首次进入 / 从 AI 设置页保存返回）时触发：
-     * 1. 若已配置 API 且（尚未分析过 或 配置发生变化），标记并尝试自动分析；
+     * 1. AI 分析不做持久化：已配置 API 时每次进入都会重新分析（aiResult 每次为 null）；
      * 2. 启动 60 秒轮询（报价 + 分时，K线每日更新不轮询）。
      */
     override fun pageDidAppear() {
@@ -293,18 +293,11 @@ internal class StockDetailPage : BasePager() {
     private val sp: SharedPreferencesModule
         get() = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
 
-    /** 加载详情：先恢复 AI 分析缓存，再展示本地行情缓存，然后拉新数据覆盖并写缓存；超时未就绪时用本地数据兜底 */
+    /** 加载详情：先展示本地行情缓存，再拉新数据覆盖并写缓存；超时未就绪时用本地数据兜底。
+     *  AI 分析不做持久化：每次进入详情页都会重新分析（pageDidAppear -> checkAutoAnalyze）。 */
     private fun loadDetail() {
         loading = true
         errorMsg = ""
-        // 0. 恢复上次 AI 分析结果（持久化：再次进入直接展示，不重复请求）
-        //    同时记录配置签名：与当前配置一致时 checkAutoAnalyze 判定为「无需重分析」
-        val cached = AiAnalysisService.loadAnalysisResult(sp, stockCode)
-        if (cached != null) {
-            aiResult = cached
-            val cfg = loadAiConfig()
-            lastConfigHash = cfg.baseUrl + "|" + cfg.apiKey + "|" + cfg.model
-        }
         // 1. 缓存优先展示（接口临时失效时页面不空白）
         applyCache()
         // 2. 加载超时兜底：8 秒内行情仍未加载出来，则使用本地缓存或提示错误，避免一直空白
@@ -1060,7 +1053,7 @@ internal class StockDetailPage : BasePager() {
         runAnalyze(config, q)
     }
 
-    /** 执行分析请求（手动 / 自动共用）；成功后写缓存，下次进入直接展示 */
+    /** 执行分析请求（手动 / 自动共用）；结果仅存内存，不持久化（每次进入重新分析） */
     private fun runAnalyze(config: AiConfig, q: StockQuote) {
         aiLoading = true
         aiResult = null
@@ -1070,7 +1063,6 @@ internal class StockDetailPage : BasePager() {
         ) { result ->
             aiLoading = false
             aiResult = result
-            AiAnalysisService.saveAnalysisResult(sp, stockCode, result)
         }
     }
 

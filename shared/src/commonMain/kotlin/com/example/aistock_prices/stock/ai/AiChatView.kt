@@ -168,10 +168,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             vif({ ctx.pendingDeleteConv != null }) {
                 ctx.deleteModal().invoke(this)
             }
-            // ---------- 消息操作菜单（删除 / 重新生成 / 修改） ----------
-            vif({ ctx.pendingMenuMsgTs != null }) {
-                ctx.msgMenu().invoke(this)
-            }
+            // 消息操作悬浮菜单：渲染在消息行内部（贴近 ⋮ 按钮），不占全屏弹窗
         }
     }
 
@@ -411,6 +408,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
         showConvPanel = false
+        pendingMenuMsgTs = null
         setTimeout(pagerId, 50) { reloadConversations() }
     }
 
@@ -476,7 +474,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             maxWidth(ctx.pagerData.pageViewWidth - 40f)
                             borderRadius(12f)
-                            padding(12f)
+                            padding(14f)
                             backgroundColor(Color.WHITE)
                             border(Border(1f, BorderStyle.SOLID, Color(0xFFEBEBEB)))
                             flexDirectionColumn()
@@ -514,8 +512,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         vif({ parseChatSegments(msg.content).any { it.type == "stock" } }) {
                             View {
                                 attr {
-                                    marginTop(10f)
-                                    paddingTop(8f)
+                                    marginTop(12f)
+                                    paddingTop(10f)
                                     border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
                                 }
                                 Text {
@@ -532,7 +530,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
-                // ⋮ 菜单触发器：贴气泡下方，对齐方向与气泡一致
+                // ⋮ 菜单触发器 + 悬浮菜单（inline 贴近 ⋮ 按钮，非全屏弹窗）
                 View {
                     attr {
                         flexDirectionRow()
@@ -557,6 +555,53 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                         event {
                             click { ctx.pendingMenuMsgTs = msg.ts }
+                        }
+                    }
+                    // 该消息菜单打开时：行内遮罩 + 悬浮操作卡片
+                    vif({ ctx.pendingMenuMsgTs == msg.ts }) {
+                        // 行内遮罩：覆盖整条消息行，点击关闭（absolute 不占布局）
+                        View {
+                            attr {
+                                absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                                zIndex(150)
+                                backgroundColor(Color(0x0A000000))
+                            }
+                            event {
+                                click { ctx.pendingMenuMsgTs = null }
+                            }
+                        }
+                        // 悬浮菜单卡片：白色圆角小卡，贴 ⋮ 按钮一侧（只锚定 bottom+单侧，宽度按内容自适应）
+                        View {
+                            attr {
+                                if (msg.role == "user") {
+                                    absolutePosition(bottom = 4f, right = 26f)
+                                } else {
+                                    absolutePosition(bottom = 4f, left = 26f)
+                                }
+                                zIndex(151)
+                                borderRadius(10f)
+                                backgroundColor(Color.WHITE)
+                                border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                                padding(4f)
+                                flexDirectionColumn()
+                            }
+                            if (msg.role == "user") {
+                                // 用户消息：修改（铅笔）、删除（垃圾桶）
+                                ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
+                                    ctx.startEditUserMessage(msg.ts)
+                                }
+                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                    ctx.deleteMessage(msg.ts)
+                                }
+                            } else {
+                                // AI 消息：重新生成（循环）、删除（垃圾桶）
+                                ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
+                                    ctx.regenerateMessage(msg.ts)
+                                }
+                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                    ctx.deleteMessage(msg.ts)
+                                }
+                            }
                         }
                     }
                 }
@@ -597,6 +642,31 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             color(StockColors.TEXT_SUB)
                         }
                     }
+                    // 停止生成按钮：生成期间始终可见，点击立即中断
+                    View {
+                        attr {
+                            marginLeft(12f)
+                            height(26f)
+                            paddingLeft(10f)
+                            paddingRight(10f)
+                            borderRadius(13f)
+                            allCenter()
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            backgroundColor(Color(0xFFE53935))
+                        }
+                        Text {
+                            attr {
+                                text("■ 停止")
+                                fontSize(11f)
+                                color(Color.WHITE)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.stopGenerating() }
+                        }
+                    }
                 }
             }
         }
@@ -609,7 +679,19 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             parseChatSegments(content).forEach { seg ->
                 when (seg.type) {
                     "stock" -> ctx.stockCard(seg.code, seg.name).invoke(this)
-                    else -> KuiklyMarkdown(content = seg.text, config = MarkdownConfig.Default)
+                    else -> {
+                        // Markdown 段：包固定宽度容器并留出上下间距，
+                        // 避免多段/卡片间数据堆积重叠，同时保证换行不溢出
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 64f)
+                                flexDirectionColumn()
+                                marginTop(4f)
+                                marginBottom(4f)
+                            }
+                            KuiklyMarkdown(content = seg.text, config = MarkdownConfig.Default)
+                        }
+                    }
                 }
             }
         }
@@ -624,9 +706,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             View {
                 attr {
                     marginTop(8f)
-                    marginBottom(4f)
+                    marginBottom(6f)
                     borderRadius(10f)
-                    padding(10f)
+                    padding(12f)
                     backgroundColor(Color(0xFFF8F9FB))
                     border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
                     flexDirectionColumn()
@@ -636,6 +718,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     attr {
                         flexDirectionRow()
                         alignItemsCenter()
+                        marginBottom(2f)
                     }
                     Text {
                         attr {
@@ -664,7 +747,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             flexDirectionRow()
                             alignItemsCenter()
-                            marginTop(6f)
+                            marginTop(8f)
                         }
                         // 价格：大字号加粗，固定宽度 + 右侧留白，杜绝加粗字溢出盖住涨跌幅
                         Text {
@@ -701,8 +784,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         LineChart {
                             attr {
                                 width(width)
-                                height(56f)
-                                marginTop(6f)
+                                height(64f)
+                                marginTop(10f)
                                 dataSets = listOf(
                                     ChartDataSet(
                                         points = points.map { ChartDataPoint(it.price.toFloat()) },
@@ -732,7 +815,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 velse {
                     View {
                         attr {
-                            marginTop(8f)
+                            marginTop(12f)
+                            marginBottom(4f)
                             flexDirectionRow()
                             alignItemsCenter()
                         }
@@ -810,8 +894,6 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private fun inputBar(): ViewBuilder {
         val ctx = this
         return {
-            // 建立响应式依赖：sending 状态变化时输入区整体重绘（切换 发送/停止 按钮）
-            val isSending = ctx.sending
             View {
                 attr {
                     flexDirectionRow()
@@ -853,10 +935,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 }
-                // 发送按钮：双形态
-                // - 正常态：主题色「发送」
-                // - sending 中：红色「停止」，点击中断当前生成
-                if (!isSending) {
+                // 发送按钮：双形态（vif/velse 依赖 ctx.sending，生成中切换为红色停止按钮）
+                // - 正常态：主题色「发送」（修改模式为「替换」）
+                // - sending 中：红色「■ 停止」，点击中断当前生成
+                vif({ !ctx.sending }) {
                     View {
                         attr {
                             marginLeft(10f)
@@ -878,7 +960,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             click { ctx.send() }
                         }
                     }
-                } else {
+                }
+                velse {
                     View {
                         attr {
                             marginLeft(10f)
@@ -886,11 +969,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             height(40f)
                             borderRadius(20f)
                             allCenter()
+                            flexDirectionRow()
+                            alignItemsCenter()
                             backgroundColor(Color(0xFFE53935))
                         }
                         Text {
                             attr {
-                                text("停止")
+                                text("■ 停止")
                                 fontSize(14f)
                                 color(Color.WHITE)
                                 fontWeightSemiBold()
@@ -1133,188 +1218,37 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    // ==================== 消息操作菜单（删除 / 修改 / 重新生成） ====================
+    // ==================== 消息操作菜单项（悬浮卡片内的图标按钮行） ====================
 
-    /**
-     * 消息操作弹层。点 ⋮ 后展示，根据当前消息 role 渲染不同操作：
-     * - 用户消息：删除、修改
-     * - AI 消息：删除、重新生成
-     */
-    private fun msgMenu(): ViewBuilder {
-        val ctx = this
+    /** 悬浮菜单内的一行操作项：图标 + 文字，点击执行 [action] */
+    private fun menuItem(icon: String, label: String, color: Color, action: () -> Unit): ViewBuilder {
         return {
-            val conv = ctx.activeConv()
-            val ts = ctx.pendingMenuMsgTs
-            val msg = conv?.messages?.firstOrNull { it.ts == ts }
-            Modal {
-                View {
+            View {
+                attr {
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingTop(9f)
+                    paddingBottom(9f)
+                    paddingLeft(10f)
+                    paddingRight(14f)
+                    borderRadius(6f)
+                }
+                Text {
                     attr {
-                        flex(1f)
-                        allCenter()
-                        backgroundColor(Color(0x66000000))
+                        text(icon)
+                        fontSize(16f)
                     }
-                    event {
-                        click { ctx.pendingMenuMsgTs = null }
+                }
+                Text {
+                    attr {
+                        text(label)
+                        fontSize(13f)
+                        color(color)
+                        marginLeft(8f)
                     }
-                    // 卡片：根据消息角色决定展示哪些操作
-                    val isUser = msg?.role == "user"
-                    val isValid = msg != null
-                    View {
-                        attr {
-                            width(ctx.pagerData.pageViewWidth - 80f)
-                            borderRadius(12f)
-                            backgroundColor(Color.WHITE)
-                            padding(16f)
-                            flexDirectionColumn()
-                        }
-                        event {
-                            click { /* 拦截冒泡，避免点菜单卡片关闭弹窗 */ }
-                        }
-                        Text {
-                            attr {
-                                text(
-                                    when {
-                                        !isValid -> "消息不存在"
-                                        isUser -> "用户消息操作"
-                                        else -> "AI 消息操作"
-                                    }
-                                )
-                                fontSize(14f)
-                                color(StockColors.TEXT_SUB)
-                                marginBottom(10f)
-                            }
-                        }
-                        if (isValid) {
-                        if (isUser) {
-                            // 修改
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    paddingTop(12f)
-                                    paddingBottom(12f)
-                                    borderRadius(8f)
-                                    backgroundColor(Color(0xFFF5F8FF))
-                                    paddingLeft(14f)
-                                }
-                                Text {
-                                    attr {
-                                        flex(1f)
-                                        text("✏️  修改（替换该消息及之后对话并重新生成）")
-                                        fontSize(14f)
-                                        color(StockColors.ACCENT)
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ts?.let { ctx.startEditUserMessage(it) }
-                                    }
-                                }
-                            }
-                            View {
-                                attr { height(8f) }
-                            }
-                            // 删除
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    paddingTop(12f)
-                                    paddingBottom(12f)
-                                    borderRadius(8f)
-                                    backgroundColor(Color(0xFFFFF1F0))
-                                    paddingLeft(14f)
-                                }
-                                Text {
-                                    attr {
-                                        flex(1f)
-                                        text("🗑  删除该消息")
-                                        fontSize(14f)
-                                        color(StockColors.UP)
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ts?.let { ctx.deleteMessage(it) }
-                                    }
-                                }
-                            }
-                        } else {
-                            // 重新生成
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    paddingTop(12f)
-                                    paddingBottom(12f)
-                                    borderRadius(8f)
-                                    backgroundColor(Color(0xFFF5F8FF))
-                                    paddingLeft(14f)
-                                }
-                                Text {
-                                    attr {
-                                        flex(1f)
-                                        text("🔄  重新生成（删除该回复并重新调用 AI）")
-                                        fontSize(14f)
-                                        color(StockColors.ACCENT)
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ts?.let { ctx.regenerateMessage(it) }
-                                    }
-                                }
-                            }
-                            View {
-                                attr { height(8f) }
-                            }
-                            // 删除
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    paddingTop(12f)
-                                    paddingBottom(12f)
-                                    borderRadius(8f)
-                                    backgroundColor(Color(0xFFFFF1F0))
-                                    paddingLeft(14f)
-                                }
-                                Text {
-                                    attr {
-                                        flex(1f)
-                                        text("🗑  删除该消息")
-                                        fontSize(14f)
-                                        color(StockColors.UP)
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ts?.let { ctx.deleteMessage(it) }
-                                    }
-                                }
-                            }
-                        }
-                        }  // 闭合 if (isValid)
-                        View {
-                            attr {
-                                marginTop(12f)
-                                height(36f)
-                                borderRadius(18f)
-                                allCenter()
-                                backgroundColor(Color(0xFFF5F6F8))
-                            }
-                            Text {
-                                attr {
-                                    text("取消")
-                                    fontSize(13f)
-                                    color(StockColors.TEXT_SUB)
-                                }
-                            }
-                            event {
-                                click { ctx.pendingMenuMsgTs = null }
-                            }
-                        }
-                    }
+                }
+                event {
+                    click { action() }
                 }
             }
         }
@@ -1345,6 +1279,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             return
         }
         sending = true
+        pendingMenuMsgTs = null
         chatInputRef?.view?.setText("")
         inputText = ""
         // 追加 user 消息并持久化

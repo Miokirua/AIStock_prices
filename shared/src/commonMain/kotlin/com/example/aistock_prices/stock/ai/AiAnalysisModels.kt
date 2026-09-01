@@ -18,8 +18,8 @@ data class AiConfig(
  *
  * @param enabled 是否启用：启用中的预设可被一键设为当前生效配置；
  *                停用的预设保留在列表中但不会被自动应用
- * @param failed 连通性校验失败标记：保存时自动校验（URL/Key/模型），
- *               无法连通时标红展示，提醒用户修正
+ * @param failed 连接校验失败标记：保存时自动校验（URL/Key/模型），
+ *               无法连接时标红展示，提醒用户修正
  */
 data class AiPreset(
     val name: String,

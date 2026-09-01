@@ -29,7 +29,7 @@ import com.tencent.kuikly.core.views.View
  * 展示预设列表：
  * - 每项：预设名 + 模型/URL 摘要 + 「当前」生效标记 + 独立启用开关 + 删除
  * - 启用开关：启用即设为当前生效配置；停用则保留在列表中
- * - 连通失败（failed）的预设标红展示，提醒修正
+ * - 连接失败（failed）的预设标红展示，提醒修正
  * - 点击预设行进入预设详情页编辑；列表底端「新建预设」进入新建页
  * - 配置表单（URL / Key / 模型 / 连接测试）已迁移至 [PresetDetailPage]
  */
@@ -120,7 +120,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
 
                 Text {
                     attr {
-                        text("提示：保存预设时自动校验连通性，失败会标红。Key 保存在本地明文（/data/data/.../shared_prefs），仅用于原型演示，请勿用于生产环境。")
+                        text("提示：保存预设时自动校验连接，失败会标红。Key 保存在本地明文（/data/data/.../shared_prefs），仅用于原型演示，请勿用于生产环境。")
                         fontSize(12f)
                         color(StockColors.TEXT_SUB)
                         marginTop(12f)
@@ -240,7 +240,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                     padding(12f)
                     borderRadius(8f)
                     backgroundColor(Color.WHITE)
-                    // 连通失败标红边框
+                    // 连接失败标红边框
                     border(
                         Border(
                             1f,
@@ -292,7 +292,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                 }
                             }
                         }
-                        // 连通失败标记
+                        // 连接失败标记
                         vif({ preset.failed }) {
                             View {
                                 attr {
@@ -306,7 +306,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                 }
                                 Text {
                                     attr {
-                                        text("连通失败")
+                                        text("连接失败")
                                         fontSize(10f)
                                         color(Color(0xFFF5222D))
                                     }
