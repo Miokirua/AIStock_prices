@@ -70,6 +70,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var menuCardY by observable(0f)
     /** ⋮ 按钮 ref（msg.ts -> 按钮），点击时换算卡片坐标 */
     private val menuTriggerRefs = mutableMapOf<Long, ViewRef<DivView>>()
+    /**
+     * AiChatView 内部根容器（body 渲染容器）。
+     * 菜单卡片 absolutePosition 相对该容器；convertFrame 也换算到该坐标系，
+     * 保证与卡片定位同基准（宿主偏移：独立页导航栏 / 首页 Tab 栏均不影响）。
+     */
+    private var rootContainerRef: ViewContainer<*, *>? = null
     /** 正在"修改"模式中的用户消息 ts（null=正常输入） */
     private var editingUserMsgTs by observable<Long?>(null)
     /** 股票卡片行情/分时就绪后自增，触发卡片重绘 */
@@ -153,6 +159,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
+            ctx.rootContainerRef = this
             attr {
                 flex(1f)
                 backgroundColor(StockColors.BG_PAGE)
@@ -1151,13 +1158,17 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     // ==================== 消息操作菜单项（悬浮卡片内的图标按钮行） ====================
 
     /**
-     * 打开消息操作菜单：记录 ⋮ 按钮在页面中的实际坐标（convertFrame 换算 + 减去 Scroller 滚动偏移），
+     * 打开消息操作菜单：记录 ⋮ 按钮在 AiChatView 根容器中的实际坐标
+     * （convertFrame 换算到 rootContainerRef，与卡片 absolutePosition 同基准；
+     * 滚动不改变布局 frame，需再减 contentViewOffsetY 得到当前屏幕位置），
      * 菜单卡片 absolutePosition 定位到按钮附近（优先下方，空间不足向上弹）。
      */
     private fun openMessageMenu(ts: Long) {
         pendingMenuMsgTs = ts
         menuTriggerRefs[ts]?.view?.also { trigger ->
-            val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), null)
+            val root = rootContainerRef
+            if (root == null) return@also
+            val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), root)
             val scrollY = chatScrollerRef?.view?.contentViewOffsetY ?: 0f
             val btnX = pageFrame.x
             val btnY = pageFrame.y - scrollY
