@@ -63,7 +63,8 @@ object AiAnalysisService {
                     baseUrl = o.optString("baseUrl") ?: "",
                     apiKey = o.optString("apiKey") ?: "",
                     model = o.optString("model") ?: "",
-                    enabled = o.optBoolean("enabled", true),
+                    // 兼容存量数据：failed 的预设强制视为未启用（旧版本可能误存 enabled=true）
+                    enabled = o.optBoolean("enabled", true) && !o.optBoolean("failed", false),
                     failed = o.optBoolean("failed", false)
                 )
             }
