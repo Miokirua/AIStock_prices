@@ -1002,6 +1002,26 @@ internal class StockDetailPage : BasePager() {
                     click { ctx.analyze() }
                 }
             }
+            // 更多详情：进入 AI 问答页（该股专属会话）并自动发问
+            View {
+                attr {
+                    marginTop(10f)
+                    height(36f)
+                    borderRadius(18f)
+                    allCenter()
+                    border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                }
+                Text {
+                    attr {
+                        text("更多详情")
+                        fontSize(14f)
+                        color(StockColors.TEXT_SUB)
+                    }
+                }
+                event {
+                    click { ctx.openAiChat() }
+                }
+            }
         }
     }
 
@@ -1038,6 +1058,15 @@ internal class StockDetailPage : BasePager() {
             put("name", stockName)
         }
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_config", pageData)
+    }
+
+    /** 进入 AI 问答页（该股专属会话，自动发问） */
+    private fun openAiChat() {
+        val pageData = JSONObject().apply {
+            put("code", stockCode)
+            put("name", stockName)
+        }
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }
 
     /** 行情详情表 */

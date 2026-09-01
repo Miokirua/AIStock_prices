@@ -3,6 +3,7 @@ package com.example.aistock_prices.stock
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.bridgeModule
 import com.example.aistock_prices.base.setTimeout
+import com.example.aistock_prices.stock.ai.AiChatView
 import com.example.aistock_prices.stock.ai.AiConfigView
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockMeta
@@ -56,6 +57,8 @@ internal class StockListPage : BasePager() {
     private var lastUpdated by observable("")
     private var currentTab by observable(0)
     private var showAddDialog by observable(false)
+    /** 顶栏「三条横杠」下拉菜单 */
+    private var showMenu by observable(false)
     private var pendingRemove by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
@@ -113,7 +116,7 @@ internal class StockListPage : BasePager() {
                 Text {
                     attr {
                         flex(1f)
-                        text(if (ctx.currentTab == 0) "自选股" else "AI 设置")
+                        text(if (ctx.currentTab == 0) "自选股" else "AI 问答")
                         fontSize(18f)
                         fontWeightBold()
                         color(StockColors.TEXT_MAIN)
@@ -122,27 +125,115 @@ internal class StockListPage : BasePager() {
                 vif({ ctx.currentTab == 0 }) {
                     Text {
                         attr {
-                            text("+ 添加")
+                            text("刷新")
                             fontSize(14f)
                             color(StockColors.ACCENT)
                             marginRight(16f)
                         }
                         event {
-                            click {
-                                ctx.addInput = ""
-                                ctx.addInputRef?.view?.setText("")
-                                ctx.showAddDialog = true
-                            }
+                            click { ctx.onRefreshTap() }
                         }
+                    }
+                }
+                // 三条横杠：下拉菜单（添加自选 / AI 设置）
+                // 三条横杠：下拉菜单（添加自选 / AI 设置）
+                // 注：Text 不支持 padding，包一层 View 容器承载点击区域
+                View {
+                    attr {
+                        paddingTop(6f)
+                        paddingBottom(6f)
+                        paddingLeft(8f)
+                        paddingRight(4f)
                     }
                     Text {
                         attr {
-                            text("刷新")
-                            fontSize(14f)
-                            color(StockColors.ACCENT)
+                            text("☰")
+                            fontSize(20f)
+                            color(StockColors.TEXT_MAIN)
+                        }
+                    }
+                    event {
+                        click { ctx.showMenu = !ctx.showMenu }
+                    }
+                }
+            }
+
+            // ---------- 顶栏下拉菜单 ----------
+            vif({ ctx.showMenu }) {
+                View {
+                    attr {
+                        absolutePosition(
+                            top = 56f + pagerData.statusBarHeight,
+                            left = 0f,
+                            right = 0f,
+                            bottom = 0f
+                        )
+                        backgroundColor(Color(0x33000000))
+                    }
+                    event {
+                        click { ctx.showMenu = false }
+                    }
+                    View {
+                        attr {
+                            absolutePosition(top = 0f, left = 0f, right = 0f)
+                            backgroundColor(Color.WHITE)
+                            paddingTop(6f)
+                            paddingBottom(6f)
                         }
                         event {
-                            click { ctx.onRefreshTap() }
+                            click { }
+                        }
+                        // 添加自选
+                        View {
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                            }
+                            Text {
+                                attr {
+                                    text("＋ 添加自选股")
+                                    fontSize(15f)
+                                    color(StockColors.TEXT_MAIN)
+                                }
+                            }
+                            event {
+                                click {
+                                    ctx.showMenu = false
+                                    ctx.addInput = ""
+                                    ctx.addInputRef?.view?.setText("")
+                                    ctx.showAddDialog = true
+                                }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(1f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                backgroundColor(Color(0xFFF0F0F0))
+                            }
+                        }
+                        // AI 设置
+                        View {
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                            }
+                            Text {
+                                attr {
+                                    text("⚙ AI 设置")
+                                    fontSize(15f)
+                                    color(StockColors.TEXT_MAIN)
+                                }
+                            }
+                            event {
+                                click {
+                                    ctx.showMenu = false
+                                    ctx.openAiConfig()
+                                }
+                            }
                         }
                     }
                 }
@@ -153,12 +244,18 @@ internal class StockListPage : BasePager() {
                 ctx.listContent().invoke(this)
             }
 
-            // ---------- 内容区：AI设置 Tab ----------
+            // ---------- 内容区：AI 问答 Tab（内联，切 Tab 对话不丢） ----------
             vif({ ctx.currentTab == 1 }) {
-                AiConfigView {
+                AiChatView {
                     event {
-                        onSaved = { ctx.bridgeModule.toast("配置已保存") }
-                        onInvalid = { msg -> ctx.bridgeModule.toast(msg) }
+                        onOpenResult = { convId, msgTs ->
+                            val pageData = JSONObject().apply {
+                                put("convId", convId)
+                                put("msgTs", msgTs)
+                            }
+                            ctx.acquireModule<RouterModule>(RouterModule.MODULE_NAME)
+                                .openPage("result_detail", pageData)
+                        }
                     }
                 }
             }
@@ -176,7 +273,7 @@ internal class StockListPage : BasePager() {
                         height(54f)
                     }
                     ctx.tabItem("自选股", 0).invoke(this)
-                    ctx.tabItem("AI 设置", 1).invoke(this)
+                    ctx.tabItem("AI 问答", 1).invoke(this)
                 }
             }
 
@@ -230,6 +327,7 @@ internal class StockListPage : BasePager() {
                                         color(StockColors.TEXT_MAIN)
                                         placeholder("如 600519 或 sh600519")
                                         placeholderColor(StockColors.TEXT_SUB)
+                                        maxTextLength(12)   // 股票代码最长 8 位 + 市场前缀（sh/sz/bj/hk 2 位）
                                     }
                                     event {
                                         textDidChange { ctx.addInput = it.text }
@@ -678,6 +776,10 @@ internal class StockListPage : BasePager() {
         val ctx = this
         val trendColor = StockColors.ofChange(quote.change)
         return {
+            // 确保 attr 求值前本行 SwipeState 已存在：
+            // swipeOffsetOf 里 `swipeStates[code]?.offset` 若 map 无此行会因 ?. 短路读不到
+            // offset observable，导致 transform/animation 的依赖未建立、首次左滑不生效
+            ctx.ensureSwipeState(quote.code)
             View {
                 attr {
                     flexDirectionColumn()
@@ -877,6 +979,9 @@ internal class StockListPage : BasePager() {
     /** 当前行的左移距离（attr 响应式读取）：展开时整体左移露出操作条，否则归位 */
     private fun swipeOffsetOf(code: String): Float = swipeStates[code]?.offset ?: 0f
 
+    /** 确保指定行的 SwipeState 已存在（渲染/手势前调用，保证 observable 依赖可建立） */
+    private fun ensureSwipeState(code: String): SwipeState = swipeStates.getOrPut(code) { SwipeState() }
+
     /**
      * 左滑手势（基于低层触摸事件）：检测到水平滑动动作后整体呼出/收回，带动画过渡。
      * - down：记录起点，并收起其它已展开的行
@@ -915,8 +1020,14 @@ internal class StockListPage : BasePager() {
                 // 垂直手势：放弃处理，让列表正常滚动
             }
             "up", "cancel" -> {
+                // 仅在本次手势确认为滑动时记录结束时间，供 click 防抖使用。
+                // 注意：touchUp 先于 click 回调触发，若无条件更新时间戳会把正常点击
+                // 全部拦截（now - lastGestureEndTime < 300ms），导致无法进入详情
+                val wasGesture = st.gestureHandled
                 st.gestureHandled = false
-                st.lastGestureEndTime = bridgeModule.currentTimeStamp()
+                if (wasGesture) {
+                    st.lastGestureEndTime = bridgeModule.currentTimeStamp()
+                }
             }
         }
     }
@@ -943,5 +1054,10 @@ internal class StockListPage : BasePager() {
             put("name", quote.name)
         }
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("stock_detail", pageData)
+    }
+
+    /** 打开 AI 服务设置页 */
+    private fun openAiConfig() {
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_config", JSONObject())
     }
 }

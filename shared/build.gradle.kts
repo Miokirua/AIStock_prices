@@ -60,6 +60,10 @@ kotlin {
             dependencies {
                 implementation("com.tencent.kuikly-open:core:${Version.getKuiklyVersion()}")
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyVersion()}")
+                // Markdown 渲染（AI 问答/结果页），版本对齐 Kuikly 内核 2.1.21
+                implementation("com.tencent.kuiklybase:KuiklyMarkdown:1.0.6-2.1.21")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
                 implementation(project(":chart"))
                 implementation(project(":table"))
             }

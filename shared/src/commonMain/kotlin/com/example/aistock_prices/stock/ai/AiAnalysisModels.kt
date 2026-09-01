@@ -15,12 +15,19 @@ data class AiConfig(
 /**
  * 用户保存的配置预设（切换即切换整套配置，含 Key）。
  * 保存配置时自动以模型名创建一个预设；同 (baseUrl, apiKey) 则更新。
+ *
+ * @param enabled 是否启用：启用中的预设可被一键设为当前生效配置；
+ *                停用的预设保留在列表中但不会被自动应用
+ * @param failed 连通性校验失败标记：保存时自动校验（URL/Key/模型），
+ *               无法连通时标红展示，提醒用户修正
  */
 data class AiPreset(
     val name: String,
     val baseUrl: String,
     val apiKey: String,
-    val model: String
+    val model: String,
+    val enabled: Boolean = true,
+    val failed: Boolean = false
 )
 
 /**

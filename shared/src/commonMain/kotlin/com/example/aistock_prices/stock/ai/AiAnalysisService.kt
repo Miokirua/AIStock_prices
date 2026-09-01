@@ -21,6 +21,7 @@ object AiAnalysisService {
     private const val KEY_API_KEY = "ai_api_key"
     private const val KEY_MODEL = "ai_model"
     private const val KEY_PRESETS = "ai_presets"
+    private const val KEY_ACTIVE_PRESET = "ai_active_preset"
 
     // ==================== 配置存取 ====================
 
@@ -38,6 +39,14 @@ object AiAnalysisService {
         sp.setItem(KEY_MODEL, config.model.trim())
     }
 
+    /** 当前生效的预设名（用于列表高亮「当前」标记；无则为空串） */
+    fun activePresetName(sp: SharedPreferencesModule): String = sp.getItem(KEY_ACTIVE_PRESET)
+
+    /** 设置当前生效预设名（空串 = 清除标记） */
+    fun setActivePreset(sp: SharedPreferencesModule, name: String) {
+        sp.setItem(KEY_ACTIVE_PRESET, name.trim())
+    }
+
     // ==================== 预设存取 ====================
 
     fun loadPresets(sp: SharedPreferencesModule): List<AiPreset> {
@@ -53,7 +62,9 @@ object AiAnalysisService {
                     name = name,
                     baseUrl = o.optString("baseUrl") ?: "",
                     apiKey = o.optString("apiKey") ?: "",
-                    model = o.optString("model") ?: ""
+                    model = o.optString("model") ?: "",
+                    enabled = o.optBoolean("enabled", true),
+                    failed = o.optBoolean("failed", false)
                 )
             }
         } catch (e: Throwable) {
@@ -70,6 +81,8 @@ object AiAnalysisService {
                     put("baseUrl", p.baseUrl)
                     put("apiKey", p.apiKey)
                     put("model", p.model)
+                    put("enabled", p.enabled)
+                    put("failed", p.failed)
                 }
             )
         }
@@ -89,17 +102,21 @@ object AiAnalysisService {
         )
         if (idx >= 0) list[idx] = preset else list.add(preset)
         savePresets(sp, list)
+        setActivePreset(sp, preset.name)
     }
 
-    /** 删除预设 */
+    /** 删除预设；若删除的是当前生效预设则同步清除生效标记 */
     fun removePreset(sp: SharedPreferencesModule, preset: AiPreset) {
         val list = loadPresets(sp).filterNot {
             it.baseUrl == preset.baseUrl && it.apiKey == preset.apiKey && it.name == preset.name
         }
         savePresets(sp, list)
+        if (activePresetName(sp) == preset.name) {
+            setActivePreset(sp, "")
+        }
     }
 
-    /** 更新指定预设（按预设名匹配；保存后同样写入当前生效配置） */
+    /** 更新指定预设（按预设名匹配；保存后同样写入当前生效配置并标记生效） */
     fun updatePreset(sp: SharedPreferencesModule, oldName: String, newPreset: AiPreset) {
         val list = loadPresets(sp).toMutableList()
         val idx = list.indexOfFirst { it.name == oldName }
@@ -110,6 +127,32 @@ object AiAnalysisService {
         }
         savePresets(sp, list)
         saveConfig(sp, AiConfig(newPreset.baseUrl, newPreset.apiKey, newPreset.model))
+        setActivePreset(sp, newPreset.name)
+    }
+
+    /** 切换预设启用状态；启用时将该预设设为当前生效配置，停用时若为当前生效则清除标记 */
+    fun setPresetEnabled(sp: SharedPreferencesModule, name: String, enabled: Boolean) {
+        val list = loadPresets(sp).toMutableList()
+        val idx = list.indexOfFirst { it.name == name }
+        if (idx < 0) return
+        val p = list[idx]
+        list[idx] = p.copy(enabled = enabled)
+        savePresets(sp, list)
+        if (enabled) {
+            saveConfig(sp, AiConfig(p.baseUrl, p.apiKey, p.model))
+            setActivePreset(sp, p.name)
+        } else if (activePresetName(sp) == p.name) {
+            setActivePreset(sp, "")
+        }
+    }
+
+    /** 标记预设连通性校验失败（true=标红；false=清除标红） */
+    fun setPresetFailed(sp: SharedPreferencesModule, name: String, failed: Boolean) {
+        val list = loadPresets(sp).toMutableList()
+        val idx = list.indexOfFirst { it.name == name }
+        if (idx < 0) return
+        list[idx] = list[idx].copy(failed = failed)
+        savePresets(sp, list)
     }
 
     // ==================== 自动读取模型 ====================
@@ -170,7 +213,88 @@ object AiAnalysisService {
         }
     }
 
+    /**
+     * 连通性测试：请求 {base}/models 判断 URL/Key 是否可用。
+     * 回调：(是否连通, 错误信息)；成功时错误信息为 null。
+     */
+    fun testConnection(
+        network: NetworkModule,
+        baseUrl: String,
+        apiKey: String,
+        callback: (Boolean, String?) -> Unit
+    ) {
+        fetchModels(network, baseUrl, apiKey) { models, err ->
+            if (err == null) callback(true, null)
+            else callback(false, err)
+        }
+    }
+
     // ==================== LLM 调用 ====================
+
+    /** AI 问答 system prompt：约定 Markdown 输出与股票卡片标记格式 */
+    private const val CHAT_SYSTEM_PROMPT =
+        "你是一名专业的A股分析助手，用户会和你讨论具体股票或指数。" +
+                "回复请使用 Markdown 格式（支持标题/加粗/列表/表格等）。" +
+                "当你想点名某只股票或指数时，请使用如下格式的代码块标注（客户端会将其渲染为实时行情卡片）：\n" +
+                "```stock\nsh600519 贵州茅台\n```\n" +
+                "代码需带市场前缀（sh/sz/bj/hk），一行一个，格式为\"代码 名称\"。" +
+                "用户未提供实时行情时，可基于你的知识回答，但要注明\"基于公开信息，非实时行情\"。"
+
+    /**
+     * 通用多轮对话（整体返回，非流式）。
+     * 回调：(内容, 错误信息)；成功时 error 为 null。
+     */
+    fun chat(
+        network: NetworkModule,
+        config: AiConfig,
+        history: List<ChatMessage>,
+        callback: (String, String?) -> Unit
+    ) {
+        val messages = JSONArray().apply {
+            put(
+                JSONObject().apply {
+                    put("role", "system")
+                    put("content", CHAT_SYSTEM_PROMPT)
+                }
+            )
+            // 携带最近 30 条上下文（含当前提问）
+            history.takeLast(30).forEach { m ->
+                if (m.content.isNotBlank()) {
+                    put(
+                        JSONObject().apply {
+                            put("role", m.role)
+                            put("content", m.content)
+                        }
+                    )
+                }
+            }
+        }
+        val body = JSONObject().apply {
+            put("model", config.model)
+            put("messages", messages)
+            put("temperature", 0.7)
+        }
+        val headers = JSONObject().apply {
+            put("Content-Type", "application/json")
+            put("Authorization", "Bearer ${config.apiKey}")
+        }
+        network.httpRequest(chatUrl(config.baseUrl), true, body, headers, null, 60) { data, success, _, _ ->
+            if (!success) {
+                callback("", "请求失败，请检查网络或 API 配置")
+                return@httpRequest
+            }
+            val content = data.optJSONArray("choices")
+                ?.optJSONObject(0)
+                ?.optJSONObject("message")
+                ?.optString("content")
+                .orEmpty()
+            if (content.isBlank()) {
+                callback("", "服务返回内容为空")
+            } else {
+                callback(content, null)
+            }
+        }
+    }
 
     /**
      * 调用 LLM 生成分析；成功且解析出结构化 JSON 则回调 [AiAnalysisResult]，

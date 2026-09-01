@@ -100,7 +100,9 @@ object StockRepository {
         val code = Regex("""[a-z]{2}\d{6}""").find(seg.substringBefore('='))?.value ?: return null
         val content = seg.substring(eq + 1).trim().trim('"', ' ')
         val f = content.split("~")
-        if (f.size < 52) return null
+        // 字段数阈值：个股回包约 60+ 字段；指数回包（如 sh000001）字段略少，
+        // 只需保证核心字段（名称/价格/昨收/涨跌/高低价）存在即可，其余越界字段由 d()/l() 兜底为 0
+        if (f.size < 35) return null
 
         fun d(i: Int): Double = f.getOrNull(i)?.trim()?.toDoubleOrNull() ?: 0.0
         fun l(i: Int): Long = d(i).toLong()
