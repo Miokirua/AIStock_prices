@@ -376,12 +376,12 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
         reloadPresets()
     }
 
-    /** 启用/停用预设：启用时立即设为当前生效配置 */
+    /** 启用/停用预设：启用时自动关闭其他预设并设为当前生效配置（互斥） */
     private fun togglePreset(preset: AiPreset, enabled: Boolean) {
         AiAnalysisService.setPresetEnabled(sp, preset.name, enabled)
         reloadPresets()
         if (enabled) {
-            bridgeToast("已启用「${preset.name}」并设为当前配置")
+            bridgeToast("已启用「${preset.name}」，其他预设已自动停用")
         } else {
             bridgeToast("已停用「${preset.name}」")
         }
