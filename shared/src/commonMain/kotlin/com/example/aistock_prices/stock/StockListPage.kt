@@ -138,7 +138,6 @@ internal class StockListPage : BasePager() {
                     }
                 }
                 // 三条横杠：下拉菜单（添加自选 / AI 设置）
-                // 三条横杠：下拉菜单（添加自选 / AI 设置）
                 // 注：Text 不支持 padding，包一层 View 容器承载点击区域
                 View {
                     attr {
