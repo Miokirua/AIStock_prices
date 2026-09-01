@@ -18,6 +18,7 @@ import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.layout.FlexAlign
 import com.tencent.kuikly.core.layout.FlexJustifyContent
+import com.tencent.kuikly.core.layout.Frame
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
@@ -26,6 +27,7 @@ import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.ActivityIndicator
+import com.tencent.kuikly.core.views.DivView
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.Modal
@@ -63,6 +65,11 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var pendingDeleteConv by observable<Conversation?>(null)
     /** 当前打开 ⋮ 菜单的消息 ts（null=无菜单） */
     private var pendingMenuMsgTs by observable<Long?>(null)
+    /** 菜单卡片在页面中的定位（卡片 absolutePosition 于全屏遮罩内，zIndex 高于遮罩） */
+    private var menuCardX by observable(0f)
+    private var menuCardY by observable(0f)
+    /** ⋮ 按钮 ref（msg.ts -> 按钮），点击时换算卡片坐标 */
+    private val menuTriggerRefs = mutableMapOf<Long, ViewRef<DivView>>()
     /** 正在"修改"模式中的用户消息 ts（null=正常输入） */
     private var editingUserMsgTs by observable<Long?>(null)
     /** 股票卡片行情/分时就绪后自增，触发卡片重绘 */
@@ -176,7 +183,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             vif({ ctx.pendingDeleteConv != null }) {
                 ctx.deleteModal().invoke(this)
             }
-            // ---------- 消息操作菜单：全屏遮罩（zIndex 149，低于菜单卡片 150），点击任意非菜单区域关闭 ----------
+            // ---------- 消息操作菜单：全屏遮罩（zIndex 149，点击任意非菜单区域关闭）+ 菜单卡片（遮罩内 absolutePosition，zIndex 150 盖过遮罩） ----------
             vif({ ctx.pendingMenuMsgTs != null }) {
                 View {
                     attr {
@@ -186,6 +193,39 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     }
                     event {
                         click { ctx.pendingMenuMsgTs = null }
+                    }
+                    // 菜单卡片：绝对定位在 ⋮ 按钮附近（坐标由 openMessageMenu 换算），
+                    // 作为遮罩子视图且 zIndex 更高，点击功能键命中卡片而非遮罩
+                    View {
+                        attr {
+                            absolutePosition(top = ctx.menuCardY, left = ctx.menuCardX)
+                            zIndex(150)
+                            borderRadius(10f)
+                            backgroundColor(Color.WHITE)
+                            border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                            padding(4f)
+                            flexDirectionColumn()
+                        }
+                        val pendingMsg = ctx.activeMsgs.firstOrNull { it.ts == ctx.pendingMenuMsgTs }
+                        if (pendingMsg != null) {
+                            if (pendingMsg.role == "user") {
+                                // 用户消息：修改（铅笔）、删除（垃圾桶）
+                                ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
+                                    ctx.startEditUserMessage(pendingMsg.ts)
+                                }.invoke(this)
+                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                    ctx.deleteMessage(pendingMsg.ts)
+                                }.invoke(this)
+                            } else {
+                                // AI 消息：重新生成（循环）、删除（垃圾桶）
+                                ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
+                                    ctx.regenerateMessage(pendingMsg.ts)
+                                }.invoke(this)
+                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                    ctx.deleteMessage(pendingMsg.ts)
+                                }.invoke(this)
+                            }
+                        }
                     }
                 }
             }
@@ -564,6 +604,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         paddingRight(if (msg.role == "user") 4f else 0f)
                     }
                     View {
+                        ref { ctx.menuTriggerRefs[msg.ts] = it }
                         attr {
                             paddingLeft(8f)
                             paddingRight(8f)
@@ -578,38 +619,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             }
                         }
                         event {
-                            click { ctx.pendingMenuMsgTs = msg.ts }
-                        }
-                    }
-                }
-                // 该消息菜单打开时：操作卡片（inline 展开在消息行内，跟随消息对齐方向；点击外部由 body 全屏遮罩关闭）
-                vif({ ctx.pendingMenuMsgTs == msg.ts }) {
-                    View {
-                        attr {
-                            zIndex(150)
-                            marginTop(2f)
-                            borderRadius(10f)
-                            backgroundColor(Color.WHITE)
-                            border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
-                            padding(4f)
-                            flexDirectionColumn()
-                        }
-                        if (msg.role == "user") {
-                            // 用户消息：修改（铅笔）、删除（垃圾桶）
-                            ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
-                                ctx.startEditUserMessage(msg.ts)
-                            }
-                            ctx.menuItem("🗑️", "删除", StockColors.UP) {
-                                ctx.deleteMessage(msg.ts)
-                            }
-                        } else {
-                            // AI 消息：重新生成（循环）、删除（垃圾桶）
-                            ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
-                                ctx.regenerateMessage(msg.ts)
-                            }
-                            ctx.menuItem("🗑️", "删除", StockColors.UP) {
-                                ctx.deleteMessage(msg.ts)
-                            }
+                            click { ctx.openMessageMenu(msg.ts) }
                         }
                     }
                 }
@@ -1140,6 +1150,41 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
     // ==================== 消息操作菜单项（悬浮卡片内的图标按钮行） ====================
 
+    /**
+     * 打开消息操作菜单：记录 ⋮ 按钮在页面中的实际坐标（convertFrame 换算 + 减去 Scroller 滚动偏移），
+     * 菜单卡片 absolutePosition 定位到按钮附近（优先下方，空间不足向上弹）。
+     */
+    private fun openMessageMenu(ts: Long) {
+        pendingMenuMsgTs = ts
+        menuTriggerRefs[ts]?.view?.also { trigger ->
+            val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), null)
+            val scrollY = chatScrollerRef?.view?.contentViewOffsetY ?: 0f
+            val btnX = pageFrame.x
+            val btnY = pageFrame.y - scrollY
+            val btnW = 36f // ⋮ 按钮估算宽
+            val btnH = 30f // ⋮ 按钮估算高
+            val cardW = 132f
+            val cardH = 100f
+            val pageW = pagerData.pageViewWidth
+            val pageH = pagerData.pageViewHeight
+            // 对齐方向跟随消息角色：用户消息 ⋮ 在右 → 卡片右缘对齐按钮右缘（向左展开）；
+            // AI 消息 ⋮ 在左 → 卡片左缘对齐按钮左缘（向右展开）
+            val isUser = activeMsgs.firstOrNull { it.ts == ts }?.role == "user"
+            val maxLeft = (pageW - cardW - 8f).coerceAtLeast(8f)
+            menuCardX = if (isUser) {
+                (btnX + btnW - cardW).coerceIn(8f, maxLeft)
+            } else {
+                btnX.coerceIn(8f, maxLeft)
+            }
+            // 垂直：优先按钮下方；下方空间不足则向上弹出
+            menuCardY = if (btnY + btnH + cardH + 12f <= pageH) {
+                btnY + btnH + 6f
+            } else {
+                (btnY - cardH - 6f).coerceAtLeast(8f)
+            }
+        }
+    }
+
     /** 悬浮菜单内的一行操作项：图标 + 文字，点击执行 [action] */
     private fun menuItem(icon: String, label: String, color: Color, action: () -> Unit): ViewBuilder {
         return {
@@ -1256,6 +1301,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         val updated = conv.copy(messages = conv.messages.filter { it.ts != ts })
         ConversationStore.update(sp, updated)
         pendingMenuMsgTs = null
+        menuTriggerRefs.remove(ts)
         reloadConversations()
     }
 
