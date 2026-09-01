@@ -214,47 +214,85 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                     event {
-                        click {
-                            val conv = ConversationStore.newConversation(ctx.sp)
-                            ctx.activeId = conv.id
-                            ctx.sp.setItem(KEY_ACTIVE_ID, conv.id)
-                            ctx.reloadConversations()
-                            ctx.showConvPanel = false
-                            ctx.bridgeToast("已新建对话")
-                        }
+                        click { ctx.onCreateConversation() }
                     }
                 }
             }
         }
     }
 
-    // ==================== 会话面板 ====================
+    // ==================== 会话面板（左侧抽屉） ====================
 
     private fun convPanel(): ViewBuilder {
         val ctx = this
+        val drawerWidth = 280f
         return {
+            // 全屏遮罩（zIndex 置顶，避免被消息区/输入区覆盖）
             View {
                 attr {
                     absolutePosition(top = 48f, left = 0f, right = 0f, bottom = 0f)
+                    zIndex(100)
                     backgroundColor(Color(0x33000000))
                 }
                 event {
                     click { ctx.showConvPanel = false }
                 }
+                // 左侧抽屉面板
                 View {
                     attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f)
+                        absolutePosition(top = 0f, left = 0f, bottom = 0f)
+                        width(drawerWidth)
                         backgroundColor(Color.WHITE)
-                        paddingTop(6f)
-                        paddingBottom(6f)
-                        maxHeight(420f)
+                        flexDirectionColumn()
+                        zIndex(101)
                     }
                     event {
                         click { }
                     }
+                    // 抽屉头部：标题 + 新建
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            padding(14f)
+                            paddingLeft(16f)
+                            paddingRight(16f)
+                            border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                        }
+                        Text {
+                            attr {
+                                flex(1f)
+                                text("会话列表")
+                                fontSize(15f)
+                                fontWeightSemiBold()
+                                color(StockColors.TEXT_MAIN)
+                            }
+                        }
+                        View {
+                            attr {
+                                paddingTop(6f)
+                                paddingBottom(6f)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                borderRadius(6f)
+                                backgroundColor(Color(0xFFF0F5FF))
+                            }
+                            Text {
+                                attr {
+                                    text("＋ 新建")
+                                    fontSize(13f)
+                                    color(StockColors.ACCENT)
+                                    fontWeightSemiBold()
+                                }
+                            }
+                            event {
+                                click { ctx.onCreateConversation() }
+                            }
+                        }
+                    }
                     Scroller {
                         attr {
-                            maxHeight(420f)
+                            flex(1f)
                             showScrollerIndicator(false)
                         }
                         vfor({ ctx.conversations }) { conv ->
@@ -265,6 +303,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                     padding(12f)
                                     marginLeft(12f)
                                     marginRight(12f)
+                                    marginTop(6f)
                                     borderRadius(8f)
                                     backgroundColor(
                                         if (conv.id == ctx.activeId) Color(0xFFF0F5FF) else Color.WHITE
@@ -298,12 +337,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                         }
                                     }
                                     event {
-                                        click {
-                                            ctx.activeId = conv.id
-                                            ctx.sp.setItem(KEY_ACTIVE_ID, conv.id)
-                                            ctx.showConvPanel = false
-                                            ctx.reloadConversations()
-                                        }
+                                        click { ctx.onSelectConversation(conv) }
                                     }
                                 }
                                 // 删除会话
@@ -324,19 +358,29 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                     }
                                 }
                             }
-                            View {
-                                attr {
-                                    height(1f)
-                                    marginLeft(12f)
-                                    marginRight(12f)
-                                    backgroundColor(Color(0xFFF0F0F0))
-                                }
-                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    /** 新建会话（先关面板，再延迟刷新列表，避免 vfor 遍历期间修改列表导致崩溃） */
+    private fun onCreateConversation() {
+        val conv = ConversationStore.newConversation(sp)
+        activeId = conv.id
+        sp.setItem(KEY_ACTIVE_ID, conv.id)
+        showConvPanel = false
+        bridgeToast("已新建对话")
+        setTimeout(pagerId, 50) { reloadConversations() }
+    }
+
+    /** 切换会话（同样先关面板再刷新） */
+    private fun onSelectConversation(conv: Conversation) {
+        activeId = conv.id
+        sp.setItem(KEY_ACTIVE_ID, conv.id)
+        showConvPanel = false
+        setTimeout(pagerId, 50) { reloadConversations() }
     }
 
     // ==================== 消息列表 ====================
@@ -402,6 +446,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             padding(12f)
                             backgroundColor(Color.WHITE)
                             border(Border(1f, BorderStyle.SOLID, Color(0xFFEBEBEB)))
+                            flexDirectionColumn()
                         }
                         vif({ msg.error }) {
                             Text {
@@ -414,7 +459,23 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             }
                         }
                         velse {
-                            ctx.renderSegments(msg.content).invoke(this)
+                            // 内容容器：固定宽度约束，确保 Markdown/长文本换行不超出屏幕
+                            View {
+                                attr {
+                                    width(ctx.pagerData.pageViewWidth - 64f)
+                                    flexDirectionColumn()
+                                }
+                                val segs = parseChatSegments(msg.content)
+                                val conv = ctx.activeConv()
+                                // 渲染 markdown + stock 标记段
+                                ctx.renderSegments(msg.content).invoke(this)
+                                // 兜底：AI 未输出 ```stock 标记，但会话关联了股票 → 自动补一张该股票卡片
+                                vif({ segs.none { it.type == "stock" } && conv?.stockCode != null }) {
+                                    if (conv?.stockCode != null) {
+                                        ctx.stockCard(conv.stockCode, conv.stockName ?: "").invoke(this)
+                                    }
+                                }
+                            }
                         }
                         // 含股票标记 → 「查看完整分析」入口（结果详情页）
                         vif({ parseChatSegments(msg.content).any { it.type == "stock" } }) {
@@ -564,7 +625,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     // 迷你分时图
                     vif({ ctx.cardMinutes[code]?.size ?: 0 > 1 }) {
                         val points = ctx.cardMinutes[code]!!
-                        val width = ctx.pagerData.pageViewWidth - 76f
+                        val width = ctx.pagerData.pageViewWidth - 96f
                         LineChart {
                             attr {
                                 width(width)
@@ -894,8 +955,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                                     ctx.sp.setItem(KEY_ACTIVE_ID, "")
                                                 }
                                             }
-                                            ctx.reloadConversations()
                                             ctx.bridgeToast("已删除对话")
+                                            // 先关弹窗再延迟刷新，避免列表重绘竞争
+                                            setTimeout(pagerId, 50) { ctx.reloadConversations() }
                                         }
                                         ctx.pendingDeleteConv = null
                                     }

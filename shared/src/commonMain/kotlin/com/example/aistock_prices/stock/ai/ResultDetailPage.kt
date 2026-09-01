@@ -116,7 +116,13 @@ internal class ResultDetailPage : BasePager() {
                                 marginBottom(10f)
                             }
                         }
-                        KuiklyMarkdown(content = ctx.content, config = MarkdownConfig.Default)
+                        // 固定宽度容器：确保长文本/Markdown 换行不超出屏幕
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 32f)
+                            }
+                            KuiklyMarkdown(content = ctx.content, config = MarkdownConfig.Default)
+                        }
                     }
                     View {
                         attr {

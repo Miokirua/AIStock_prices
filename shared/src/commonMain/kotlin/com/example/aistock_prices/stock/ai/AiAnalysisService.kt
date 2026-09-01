@@ -155,6 +155,60 @@ object AiAnalysisService {
         savePresets(sp, list)
     }
 
+    // ==================== 分析结果持久化 ====================
+
+    private fun analysisKey(code: String) = "ai_analysis_$code"
+
+    /** 保存个股 AI 分析结果缓存（再次进入详情页直接展示，不重复请求） */
+    fun saveAnalysisResult(sp: SharedPreferencesModule, code: String, result: AiAnalysisResult) {
+        val obj = JSONObject().apply {
+            put("trend", result.trend)
+            put("trendDesc", result.trendDesc)
+            put("suggestion", result.suggestion)
+            put("buyPoints", JSONArray().apply { result.buyPoints.forEach { put(it) } })
+            put("sellPoints", JSONArray().apply { result.sellPoints.forEach { put(it) } })
+            put("risks", JSONArray().apply { result.risks.forEach { put(it) } })
+            put("summary", result.summary)
+            put("riskLevel", result.riskLevel)
+            put("source", result.source)
+            put("ts", System.currentTimeMillis())
+        }
+        sp.setItem(analysisKey(code), obj.toString())
+    }
+
+    /** 读取个股 AI 分析结果缓存；无则 null */
+    fun loadAnalysisResult(sp: SharedPreferencesModule, code: String): AiAnalysisResult? {
+        val raw = sp.getItem(analysisKey(code))
+        if (raw.isBlank()) return null
+        return try {
+            val o = JSONObject(raw)
+            AiAnalysisResult(
+                trend = o.optString("trend", ""),
+                trendDesc = o.optString("trendDesc", ""),
+                suggestion = o.optString("suggestion", ""),
+                buyPoints = o.optJSONArray("buyPoints")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.optString(it) }
+                } ?: emptyList(),
+                sellPoints = o.optJSONArray("sellPoints")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.optString(it) }
+                } ?: emptyList(),
+                risks = o.optJSONArray("risks")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.optString(it) }
+                } ?: emptyList(),
+                summary = o.optString("summary", ""),
+                riskLevel = o.optString("riskLevel", AiAnalysisResult.RISK_MID),
+                source = o.optString("source", AiAnalysisResult.SOURCE_RULE)
+            )
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    /** 清除个股 AI 分析结果缓存（供「重新分析」使用时可先清再存） */
+    fun clearAnalysisResult(sp: SharedPreferencesModule, code: String) {
+        sp.setItem(analysisKey(code), "")
+    }
+
     // ==================== 自动读取模型 ====================
 
     /** 从 baseUrl 推导 models 接口地址（兼容用户粘贴完整 chat/completions 地址） */
@@ -235,9 +289,10 @@ object AiAnalysisService {
     private const val CHAT_SYSTEM_PROMPT =
         "你是一名专业的A股分析助手，用户会和你讨论具体股票或指数。" +
                 "回复请使用 Markdown 格式（支持标题/加粗/列表/表格等）。" +
-                "当你想点名某只股票或指数时，请使用如下格式的代码块标注（客户端会将其渲染为实时行情卡片）：\n" +
+                "【重要】只要用户在讨论具体股票或指数，你的回复中就必须用如下格式的代码块点名它（客户端会将其渲染为实时行情卡片+迷你走势图）：\n" +
                 "```stock\nsh600519 贵州茅台\n```\n" +
                 "代码需带市场前缀（sh/sz/bj/hk），一行一个，格式为\"代码 名称\"。" +
+                "若提到多只则分行放多个。请务必输出这个代码块，不要省略。" +
                 "用户未提供实时行情时，可基于你的知识回答，但要注明\"基于公开信息，非实时行情\"。"
 
     /**

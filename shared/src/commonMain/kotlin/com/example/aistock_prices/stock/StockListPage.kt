@@ -159,6 +159,7 @@ internal class StockListPage : BasePager() {
             }
 
             // ---------- 顶栏下拉菜单 ----------
+            // 注：菜单需 zIndex 置顶，否则会被后面声明的列表/底栏内容覆盖（绘制顺序在后的在上层）
             vif({ ctx.showMenu }) {
                 View {
                     attr {
@@ -168,6 +169,7 @@ internal class StockListPage : BasePager() {
                             right = 0f,
                             bottom = 0f
                         )
+                        zIndex(100)
                         backgroundColor(Color(0x33000000))
                     }
                     event {
