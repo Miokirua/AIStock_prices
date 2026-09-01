@@ -12,12 +12,13 @@ import com.example.aistock_prices.stock.data.Watchlist
 import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
 import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
-import com.tencent.kuikly.core.base.event.PanGestureParams
+import com.tencent.kuikly.core.base.event.TouchParams
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
@@ -66,17 +67,23 @@ internal class StockListPage : BasePager() {
     /** 手势方向判定阈值（dp），超过才认定是水平/垂直手势 */
     private val swipeSlop = 8f
     /** 每次左滑手势结束后屏蔽点击进详情的时间窗口（ms） */
-    private val panClickGuardMs = 300L
+    private val swipeClickGuardMs = 300L
+    /** 左滑呼出/收回动画时长（秒） */
+    private val swipeAnimDuration = 0.2f
     /** 每行左滑状态：code -> SwipeState */
     private val swipeStates = mutableMapOf<String, SwipeState>()
 
-    /** 单行左滑状态（expanded=true 表示操作条整体展开，内容行左移露出） */
+    /**
+     * 单行左滑状态。
+     * offset：内容行水平位移（0f 归位 / -actionWidth 展开），observable 驱动 transform 与动画
+     * 其余字段为手势过程量，非响应式
+     */
     private class SwipeState {
-        var expanded by observable(false)
-        var gestureHandled by observable(false) // 本次手势已判定（水平触发 或 垂直放弃）
-        var startX by observable(0f)
-        var startY by observable(0f)
-        var lastPanEndTime by observable(0L)   // 最近一次手势结束时间戳（防御点击误触）
+        var offset by observable(0f)
+        var startX = 0f
+        var startY = 0f
+        var gestureHandled = false
+        var lastGestureEndTime = 0L
     }
 
     private val network: NetworkModule
@@ -727,7 +734,7 @@ internal class StockListPage : BasePager() {
                         }
                     }
                 }
-                // 内容区（行布局，可左移）
+                // 内容区（行布局，可左移；offset 变化时以动画过渡）
                 View {
                     attr {
                         flex(1f)
@@ -737,6 +744,10 @@ internal class StockListPage : BasePager() {
                         paddingRight(16f)
                         backgroundColor(Color.WHITE)
                         transform(translate = Translate(0f, 0f, ctx.swipeOffsetOf(quote.code)))
+                        animation(
+                            Animation.easeInOut(ctx.swipeAnimDuration),
+                            ctx.swipeOffsetOf(quote.code)
+                        )
                     }
                     // 左：名称 + 代码
                     View {
@@ -837,13 +848,19 @@ internal class StockListPage : BasePager() {
                         click {
                             val st = ctx.swipeStates[quote.code]
                             val now = ctx.bridgeModule.currentTimeStamp()
-                            if (st != null && st.expanded) {
-                                st.expanded = false // 已左滑展开 → 点击收回
-                            } else if (st == null || now - st.lastPanEndTime > ctx.panClickGuardMs) {
+                            if (st != null && st.offset < 0f) {
+                                st.offset = 0f // 已左滑展开 → 点击收回
+                            } else if (st == null || now - st.lastGestureEndTime > ctx.swipeClickGuardMs) {
                                 ctx.openDetail(quote) // 刚结束滑动手势时不响应点击，避免误进详情
                             }
                         }
-                        pan { ctx.onSwipePan(quote, it) }
+                        // 低层触摸事件实现左滑检测：
+                        // 不注册 pan，避免 Android 上 DOWN 即 requestDisallowInterceptTouchEvent(true)
+                        // 导致父级列表无法拦截垂直滚动；垂直手势由列表接管，水平手势放行到这里
+                        touchDown { ctx.onTouchSwipe(quote, it, "down") }
+                        touchMove { ctx.onTouchSwipe(quote, it, "move") }
+                        touchUp { ctx.onTouchSwipe(quote, it, "up") }
+                        touchCancel { ctx.onTouchSwipe(quote, it, "cancel") }
                     }
                 }
                 // 分隔线
@@ -858,25 +875,24 @@ internal class StockListPage : BasePager() {
     }
 
     /** 当前行的左移距离（attr 响应式读取）：展开时整体左移露出操作条，否则归位 */
-    private fun swipeOffsetOf(code: String): Float =
-        if (swipeStates[code]?.expanded == true) -actionWidth else 0f
+    private fun swipeOffsetOf(code: String): Float = swipeStates[code]?.offset ?: 0f
 
     /**
-     * 左滑手势：检测到水平滑动动作后整体呼出/收回（不做跟手位移）。
-     * - start：记录起点，并收起其它已展开的行
+     * 左滑手势（基于低层触摸事件）：检测到水平滑动动作后整体呼出/收回，带动画过渡。
+     * - down：记录起点，并收起其它已展开的行
      * - move：仅做方向判定——水平手势（左滑展开 / 右滑收回）整体切换；
      *         垂直手势完全忽略、不位移任何内容，滚动交给列表容器
-     * - end：复位手势状态
+     * - up / cancel：复位手势状态；cancel（列表拦截滚动）同样复位
      */
-    private fun onSwipePan(quote: StockQuote, params: PanGestureParams) {
+    private fun onTouchSwipe(quote: StockQuote, params: TouchParams, phase: String) {
         val st = swipeStates.getOrPut(quote.code) { SwipeState() }
-        when (params.state) {
-            "start" -> {
+        when (phase) {
+            "down" -> {
                 st.startX = params.x
                 st.startY = params.y
                 st.gestureHandled = false
                 swipeStates.forEach { (code, s) ->
-                    if (code != quote.code && s.expanded) s.expanded = false
+                    if (code != quote.code && s.offset < 0f) s.offset = 0f
                 }
             }
             "move" -> {
@@ -889,18 +905,18 @@ internal class StockListPage : BasePager() {
                     // 水平手势：左滑整体呼出，右滑整体收回
                     if (dx < 0f) {
                         swipeStates.forEach { (code, s) ->
-                            if (code != quote.code && s.expanded) s.expanded = false
+                            if (code != quote.code && s.offset < 0f) s.offset = 0f
                         }
-                        st.expanded = true
+                        st.offset = -actionWidth
                     } else {
-                        st.expanded = false
+                        st.offset = 0f
                     }
                 }
                 // 垂直手势：放弃处理，让列表正常滚动
             }
-            "end" -> {
+            "up", "cancel" -> {
                 st.gestureHandled = false
-                st.lastPanEndTime = bridgeModule.currentTimeStamp()
+                st.lastGestureEndTime = bridgeModule.currentTimeStamp()
             }
         }
     }
@@ -910,13 +926,13 @@ internal class StockListPage : BasePager() {
         val willPin = !Watchlist.isPinned(sp, quote.code)
         Watchlist.pin(sp, quote.code, willPin)
         bridgeModule.toast(if (willPin) "已置顶 ${quote.name}" else "已取消置顶 ${quote.name}")
-        swipeStates[quote.code]?.expanded = false
+        swipeStates[quote.code]?.offset = 0f
         resortQuotes()
     }
 
     /** 左滑操作条：删除（弹出确认框） */
     private fun onSwipeDelete(quote: StockQuote) {
-        swipeStates[quote.code]?.expanded = false
+        swipeStates[quote.code]?.offset = 0f
         pendingRemove = quote
     }
 
