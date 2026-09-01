@@ -57,8 +57,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var showConvPanel by observable(false)
     private var inputText by observable("")
     private var sending by observable(false)
-    /** 当前正在生成的请求是否已被中断；chat 回调据此丢弃结果 */
-    private var cancelled by observable(false)
+    /**
+     * 生成请求序号：每次发请求 +1，callback 捕获当时的 seq，返回时与最新 chatSeq 比对，
+     * 不一致则丢弃（被中断或被新一轮请求替代）。比布尔 cancelled 更安全：
+     * 停止后立刻发新消息时，旧请求先返回也不会被误当成新请求结果。
+     */
+    private var chatSeq = 0
     private var pendingDeleteConv by observable<Conversation?>(null)
     /** 当前打开 ⋮ 菜单的消息 ts（null=无菜单） */
     private var pendingMenuMsgTs by observable<Long?>(null)
@@ -1154,6 +1158,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     }
                     // 卡片：根据消息角色决定展示哪些操作
                     val isUser = msg?.role == "user"
+                    val isValid = msg != null
                     View {
                         attr {
                             width(ctx.pagerData.pageViewWidth - 80f)
@@ -1167,12 +1172,19 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                         Text {
                             attr {
-                                text(if (isUser) "用户消息操作" else "AI 消息操作")
+                                text(
+                                    when {
+                                        !isValid -> "消息不存在"
+                                        isUser -> "用户消息操作"
+                                        else -> "AI 消息操作"
+                                    }
+                                )
                                 fontSize(14f)
                                 color(StockColors.TEXT_SUB)
                                 marginBottom(10f)
                             }
                         }
+                        if (isValid) {
                         if (isUser) {
                             // 修改
                             View {
@@ -1282,6 +1294,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 }
                             }
                         }
+                        }  // 闭合 if (isValid)
                         View {
                             attr {
                                 marginTop(12f)
@@ -1332,7 +1345,6 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             return
         }
         sending = true
-        cancelled = false
         chatInputRef?.view?.setText("")
         inputText = ""
         // 追加 user 消息并持久化
@@ -1341,19 +1353,22 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         )
         ConversationStore.update(sp, updated)
         reloadConversations()
-        // 公共 chat 逻辑（cancelled 标记检查）
+        // 公共 chat 逻辑（chatSeq 竞态保护）
         callChat(updated, updated.messages)
     }
 
     /**
-     * 公共 chat 调用：在 sending=true 后异步请求，callback 内检查 [cancelled] 决定是否落库。
-     * 中断时 callback 仍会触发（网络请求无法真正取消），通过 cancelled 标志位丢弃结果。
+     * 公共 chat 调用：每次 +1 chatSeq，callback 内捕获当时 seq 编号；
+     * 返回时若 seq != 当前 chatSeq 说明已被中断或被新一轮请求替代，直接丢弃。
+     * 真正"中断"做不到（Kuikly NetworkModule.httpRequest 无 cancel API），
+     * 但通过序号机制可以确保：停止后立即发新消息，旧请求结果不会污染新会话。
      */
     private fun callChat(conv: Conversation, history: List<ChatMessage>) {
+        val seq = ++chatSeq
         val config = AiAnalysisService.loadConfig(sp)
         AiAnalysisService.chat(network, config, history) { content, err ->
-            // 中断或新一轮已开始：丢弃结果
-            if (cancelled) return@chat
+            // 序号不匹配 → 被中断或被新请求替代，丢弃
+            if (seq != chatSeq) return@chat
             sending = false
             val nowConv = ConversationStore.load(sp).firstOrNull { it.id == conv.id }
                 ?: return@chat
@@ -1367,10 +1382,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    /** 中断生成：设 cancelled=true，callback 内会丢弃结果 */
+    /** 中断生成：自增 chatSeq 让当前请求失效，UI 立即恢复 */
     private fun stopGenerating() {
         if (!sending) return
-        cancelled = true
+        chatSeq++
         sending = false
         bridgeToast("已停止生成")
     }
@@ -1422,9 +1437,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         chatInputRef?.view?.setText("")
         inputText = ""
         reloadConversations()
-        // 重新发问
+        // 重新发问（chatSeq 竞态保护）
         sending = true
-        cancelled = false
         callChat(updated, updated.messages)
     }
 
@@ -1450,9 +1464,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         ConversationStore.update(sp, updated)
         pendingMenuMsgTs = null
         reloadConversations()
-        // 用 kept 作为 history 重新调 chat
+        // 用 kept 作为 history 重新调 chat（chatSeq 竞态保护）
         sending = true
-        cancelled = false
         callChat(updated, updated.messages)
     }
 
