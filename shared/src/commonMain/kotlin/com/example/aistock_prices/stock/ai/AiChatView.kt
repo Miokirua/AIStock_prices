@@ -1158,42 +1158,72 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     // ==================== 消息操作菜单项（悬浮卡片内的图标按钮行） ====================
 
     /**
-     * 打开消息操作菜单：记录 ⋮ 按钮在 AiChatView 根容器中的实际坐标
+     * 打开消息操作菜单：延迟一拍换算 ⋮ 按钮在 AiChatView 根容器中的实际坐标
      * （convertFrame 换算到 rootContainerRef，与卡片 absolutePosition 同基准；
-     * 滚动不改变布局 frame，需再减 contentViewOffsetY 得到当前屏幕位置），
-     * 菜单卡片 absolutePosition 定位到按钮附近（优先下方，空间不足向上弹）。
+     * 滚动不改变布局 frame，需再减 contentViewOffsetY 得到当前屏幕位置）。
+     *
+     * 延迟目的：进入页面/切会话会自动滚动到底（setContentOffset 带动画），点击瞬间
+     * contentViewOffsetY 可能仍是中间值（动画未完成）→ 坐标错位，菜单显示在错误位置
+     * （真机症状：首次点菜单位置异常，滚动稳定后再点才正常）。延迟 50ms 等滚动稳定，
+     * 160ms 再校准一次（动画可能仍在进行）。
+     *
+     * 菜单卡片 absolutePosition 定位到按钮附近（优先下方，空间不足向上弹，不被底部栏遮挡）。
      */
     private fun openMessageMenu(ts: Long) {
-        pendingMenuMsgTs = ts
-        menuTriggerRefs[ts]?.view?.also { trigger ->
-            val root = rootContainerRef
-            if (root == null) return@also
-            val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), root)
-            val scrollY = chatScrollerRef?.view?.contentViewOffsetY ?: 0f
-            val btnX = pageFrame.x
-            val btnY = pageFrame.y - scrollY
-            val btnW = 36f // ⋮ 按钮估算宽
-            val btnH = 30f // ⋮ 按钮估算高
-            val cardW = 132f
-            val cardH = 100f
-            val pageW = pagerData.pageViewWidth
-            val pageH = pagerData.pageViewHeight
-            // 对齐方向跟随消息角色：用户消息 ⋮ 在右 → 卡片右缘对齐按钮右缘（向左展开）；
-            // AI 消息 ⋮ 在左 → 卡片左缘对齐按钮左缘（向右展开）
-            val isUser = activeMsgs.firstOrNull { it.ts == ts }?.role == "user"
-            val maxLeft = (pageW - cardW - 8f).coerceAtLeast(8f)
-            menuCardX = if (isUser) {
-                (btnX + btnW - cardW).coerceIn(8f, maxLeft)
-            } else {
-                btnX.coerceIn(8f, maxLeft)
+        // 先关闭可能存在的旧菜单（统一延迟重开，保证坐标计算时滚动已稳定）
+        pendingMenuMsgTs = null
+        setTimeout(pagerId, 50) {
+            if (pendingMenuMsgTs != null) return@setTimeout // 期间菜单已被打开（先执行者生效），放弃本次
+            if (!applyMenuCardPos(ts)) {
+                // 按钮/容器定位失败（视图未就绪）：兜底屏幕中上部，保证菜单可见可点
+                menuCardX = 24f
+                menuCardY = 120f
             }
-            // 垂直：优先按钮下方；下方空间不足则向上弹出
-            menuCardY = if (btnY + btnH + cardH + 12f <= pageH) {
-                btnY + btnH + 6f
-            } else {
-                (btnY - cardH - 6f).coerceAtLeast(8f)
-            }
+            pendingMenuMsgTs = ts
         }
+        // 滚动动画可能仍在进行：显示后再校准一次坐标（若菜单仍打开）
+        setTimeout(pagerId, 160) {
+            if (pendingMenuMsgTs != ts) return@setTimeout
+            applyMenuCardPos(ts)
+        }
+    }
+
+    /**
+     * 计算菜单卡片坐标并写入 [menuCardX]/[menuCardY]。
+     * @return true=定位成功；false=按钮/容器未就绪（调用方需兜底坐标）。
+     */
+    private fun applyMenuCardPos(ts: Long): Boolean {
+        val root = rootContainerRef ?: return false
+        val trigger = menuTriggerRefs[ts]?.view ?: return false
+        val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), root)
+        val scrollY = chatScrollerRef?.view?.contentViewOffsetY ?: 0f
+        val btnX = pageFrame.x
+        val btnY = pageFrame.y - scrollY
+        val btnW = 36f // ⋮ 按钮估算宽
+        val btnH = 30f // ⋮ 按钮估算高
+        val cardW = 132f
+        val cardH = 100f
+        // 边界基准用 AiChatView 根容器实际尺寸（frame 布局尺寸），而非 pageViewWidth/Height——
+        // 独立页导航栏 / 首页 Tab 栏会压缩可视区域，用页面高度判断会让最末端消息的菜单
+        // 放下方时超出可视区，被底部栏遮挡
+        val effW = root.frame.width.takeIf { it > 0f } ?: pagerData.pageViewWidth
+        val effH = root.frame.height.takeIf { it > 0f } ?: pagerData.pageViewHeight
+        // 对齐方向跟随消息角色：用户消息 ⋮ 在右 → 卡片右缘对齐按钮右缘（向左展开）；
+        // AI 消息 ⋮ 在左 → 卡片左缘对齐按钮左缘（向右展开）
+        val isUser = activeMsgs.firstOrNull { it.ts == ts }?.role == "user"
+        val maxLeft = (effW - cardW - 8f).coerceAtLeast(8f)
+        menuCardX = if (isUser) {
+            (btnX + btnW - cardW).coerceIn(8f, maxLeft)
+        } else {
+            btnX.coerceIn(8f, maxLeft)
+        }
+        // 垂直：优先按钮下方；下方空间不足（底部输入栏/菜单栏遮挡）则向上弹出
+        menuCardY = if (btnY + btnH + cardH + 12f <= effH) {
+            btnY + btnH + 6f
+        } else {
+            (btnY - cardH - 6f).coerceAtLeast(8f)
+        }
+        return true
     }
 
     /** 悬浮菜单内的一行操作项：图标 + 文字，点击执行 [action] */
