@@ -15,7 +15,9 @@ import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.base.event.PanGestureParams
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
@@ -53,12 +55,22 @@ internal class StockListPage : BasePager() {
     private var currentTab by observable(0)
     private var showAddDialog by observable(false)
     private var pendingRemove by observable<StockQuote?>(null)
-    /** 长按操作菜单目标（置顶/删除二合一） */
-    private var longPressTarget by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
     private var refreshRef: ViewRef<RefreshView>? = null
     private var pollTimerRef = ""
+
+    /** 左滑操作条宽度（置顶 72f + 删除 72f） */
+    private val actionWidth = 144f
+    /** 每行左滑状态：code -> SwipeState */
+    private val swipeStates = mutableMapOf<String, SwipeState>()
+
+    /** 单行左滑状态（行内位移为负值表示左移露出操作条） */
+    private class SwipeState {
+        var offset by observable(0f)
+        var startX by observable(0f)
+        var startOffset by observable(0f)
+    }
 
     private val network: NetworkModule
         get() = acquireModule<NetworkModule>(NetworkModule.MODULE_NAME)
@@ -261,125 +273,6 @@ internal class StockListPage : BasePager() {
                 }
             }
 
-            // ---------- 长按操作菜单（置顶 / 删除 二合一） ----------
-            vif({ ctx.longPressTarget != null }) {
-                Modal {
-                    View {
-                        attr {
-                            flex(1f)
-                            allCenter()
-                            backgroundColor(Color(0x66000000))
-                        }
-                        event {
-                            click { ctx.longPressTarget = null }
-                        }
-                        View {
-                            attr {
-                                width(ctx.pagerData.pageViewWidth - 60f)
-                                borderRadius(12f)
-                                backgroundColor(Color.WHITE)
-                                padding(20f)
-                            }
-                            event {
-                                click { }
-                            }
-                            Text {
-                                attr {
-                                    text("${ctx.longPressTarget?.name}  ${ctx.longPressTarget?.symbol}")
-                                    fontSize(16f)
-                                    fontWeightSemiBold()
-                                    color(StockColors.TEXT_MAIN)
-                                    marginBottom(6f)
-                                }
-                            }
-                            Text {
-                                attr {
-                                    text("请选择操作")
-                                    fontSize(13f)
-                                    color(StockColors.TEXT_SUB)
-                                    marginBottom(16f)
-                                }
-                            }
-                            // 置顶 / 取消置顶
-                            View {
-                                attr {
-                                    height(44f)
-                                    borderRadius(22f)
-                                    allCenter()
-                                    marginBottom(10f)
-                                    backgroundColor(if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) Color(0xFFF5F6F8) else StockColors.ACCENT)
-                                }
-                                Text {
-                                    attr {
-                                        text(
-                                            if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) "取消置顶"
-                                            else "置顶"
-                                        )
-                                        fontSize(15f)
-                                        color(if (ctx.longPressTarget != null && Watchlist.isPinned(ctx.sp, ctx.longPressTarget!!.code)) StockColors.TEXT_MAIN else Color.WHITE)
-                                        fontWeightSemiBold()
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ctx.longPressTarget?.let { quote ->
-                                            val willPin = !Watchlist.isPinned(ctx.sp, quote.code)
-                                            Watchlist.pin(ctx.sp, quote.code, willPin)
-                                            ctx.bridgeModule.toast(if (willPin) "已置顶 ${quote.name}" else "已取消置顶 ${quote.name}")
-                                            ctx.longPressTarget = null
-                                            ctx.resortQuotes()
-                                        }
-                                    }
-                                }
-                            }
-                            // 删除
-                            View {
-                                attr {
-                                    height(44f)
-                                    borderRadius(22f)
-                                    allCenter()
-                                    marginBottom(10f)
-                                    backgroundColor(Color(0xFFFFF1F0))
-                                }
-                                Text {
-                                    attr {
-                                        text("删除")
-                                        fontSize(15f)
-                                        color(StockColors.UP)
-                                        fontWeightSemiBold()
-                                    }
-                                }
-                                event {
-                                    click {
-                                        ctx.pendingRemove = ctx.longPressTarget
-                                        ctx.longPressTarget = null
-                                    }
-                                }
-                            }
-                            // 取消
-                            View {
-                                attr {
-                                    height(44f)
-                                    borderRadius(22f)
-                                    allCenter()
-                                    backgroundColor(Color(0xFFF0F0F0))
-                                }
-                                Text {
-                                    attr {
-                                        text("取消")
-                                        fontSize(15f)
-                                        color(StockColors.TEXT_SUB)
-                                    }
-                                }
-                                event {
-                                    click { ctx.longPressTarget = null }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // ---------- 删除确认弹窗 ----------
             vif({ ctx.pendingRemove != null }) {
                 Modal {
@@ -464,6 +357,7 @@ internal class StockListPage : BasePager() {
                                             ctx.pendingRemove?.let { quote ->
                                                 if (Watchlist.remove(ctx.sp, quote.code)) {
                                                     ctx.bridgeModule.toast("已移除 ${quote.name}")
+                                                    ctx.swipeStates.remove(quote.code)
                                                     ctx.loadData()
                                                 }
                                             }
@@ -765,7 +659,7 @@ internal class StockListPage : BasePager() {
         }
     }
 
-    /** 单条行情 item */
+    /** 单条行情 item（左滑呼出 置顶/删除 操作条） */
     private fun quoteItem(quote: StockQuote): ViewBuilder {
         val ctx = this
         val trendColor = StockColors.ofChange(quote.change)
@@ -775,8 +669,58 @@ internal class StockListPage : BasePager() {
                     flexDirectionColumn()
                     height(68f)
                     backgroundColor(Color.WHITE)
+                    overflow(true) // 裁剪内容行左移后左侧超出部分
                 }
-                // 内容区（行布局）
+                // 底层：左滑操作条（置顶 + 删除），内容行左移后露出
+                View {
+                    attr {
+                        absolutePosition(top = 0f, right = 0f, bottom = 0f)
+                        width(ctx.actionWidth)
+                        flexDirectionRow()
+                    }
+                    // 置顶 / 取消置顶
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(
+                                if (Watchlist.isPinned(ctx.sp, quote.code)) Color(0xFF909399)
+                                else Color(0xFFE6A23C)
+                            )
+                        }
+                        Text {
+                            attr {
+                                text(if (Watchlist.isPinned(ctx.sp, quote.code)) "取消置顶" else "置顶")
+                                fontSize(13f)
+                                color(Color.WHITE)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.onSwipePin(quote) }
+                        }
+                    }
+                    // 删除
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(Color(0xFFF0483E))
+                        }
+                        Text {
+                            attr {
+                                text("删除")
+                                fontSize(13f)
+                                color(Color.WHITE)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.onSwipeDelete(quote) }
+                        }
+                    }
+                }
+                // 内容区（行布局，可左移）
                 View {
                     attr {
                         flex(1f)
@@ -784,6 +728,8 @@ internal class StockListPage : BasePager() {
                         alignItemsCenter()
                         paddingLeft(16f)
                         paddingRight(16f)
+                        backgroundColor(Color.WHITE)
+                        transform(translate = Translate(0f, 0f, ctx.swipeOffsetOf(quote.code)))
                     }
                     // 左：名称 + 代码
                     View {
@@ -880,25 +826,16 @@ internal class StockListPage : BasePager() {
                             }
                         }
                     }
-                    // 更多操作按钮（点击打开 置顶/删除 菜单）
-                    View {
-                        attr {
-                            width(36f)
-                            allCenter()
-                        }
-                        Text {
-                            attr {
-                                text("···")
-                                fontSize(18f)
-                                color(StockColors.TEXT_SUB)
-                            }
-                            event {
-                                click { ctx.longPressTarget = quote }
-                            }
-                        }
-                    }
                     event {
-                        click { ctx.openDetail(quote) }
+                        click {
+                            val st = ctx.swipeStates[quote.code]
+                            if (st != null && st.offset < 0f) {
+                                st.offset = 0f // 已左滑展开 → 点击收回
+                            } else {
+                                ctx.openDetail(quote)
+                            }
+                        }
+                        pan { ctx.onSwipePan(quote, it) }
                     }
                 }
                 // 分隔线
@@ -908,12 +845,47 @@ internal class StockListPage : BasePager() {
                         backgroundColor(Color(0xFFEBEBEB))
                     }
                 }
-                event {
-                    click { ctx.openDetail(quote) }
-                    longPress { ctx.longPressTarget = quote }
-                }
             }
         }
+    }
+
+    /** 当前行的左移距离（attr 响应式读取） */
+    private fun swipeOffsetOf(code: String): Float = swipeStates[code]?.offset ?: 0f
+
+    /** 左滑手势：start 记录起点并收起其它行；move 跟随手指；end 吸附展开/收回 */
+    private fun onSwipePan(quote: StockQuote, params: PanGestureParams) {
+        val st = swipeStates.getOrPut(quote.code) { SwipeState() }
+        when (params.state) {
+            "start" -> {
+                st.startX = params.x
+                st.startOffset = st.offset
+                swipeStates.forEach { (code, s) ->
+                    if (code != quote.code && s.offset != 0f) s.offset = 0f
+                }
+            }
+            "move" -> {
+                val delta = params.x - st.startX
+                st.offset = (st.startOffset + delta).coerceIn(-actionWidth, 0f)
+            }
+            "end" -> {
+                st.offset = if (st.offset < -actionWidth / 2f) -actionWidth else 0f
+            }
+        }
+    }
+
+    /** 左滑操作条：置顶 / 取消置顶 */
+    private fun onSwipePin(quote: StockQuote) {
+        val willPin = !Watchlist.isPinned(sp, quote.code)
+        Watchlist.pin(sp, quote.code, willPin)
+        bridgeModule.toast(if (willPin) "已置顶 ${quote.name}" else "已取消置顶 ${quote.name}")
+        swipeStates[quote.code]?.offset = 0f
+        resortQuotes()
+    }
+
+    /** 左滑操作条：删除（弹出确认框） */
+    private fun onSwipeDelete(quote: StockQuote) {
+        swipeStates[quote.code]?.offset = 0f
+        pendingRemove = quote
     }
 
     /** 跳转个股详情 */
