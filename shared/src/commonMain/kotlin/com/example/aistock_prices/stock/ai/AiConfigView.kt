@@ -1,7 +1,9 @@
 package com.example.aistock_prices.stock.ai
 
+import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.bridgeModule
-import com.example.aistock_prices.stock.ui.StockColors
+import com.example.aistock_prices.stock.ui.ThemePalette
+import com.example.aistock_prices.stock.ui.ThemePalettes
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
@@ -39,6 +41,10 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
     /** 待删除的预设（删除确认弹窗） */
     private var pendingDelete by observable<AiPreset?>(null)
 
+    /** 当前主题色板：按宿主页面 isNightMode 取亮/暗色板（本组件非 BasePager 子类，故自行取值） */
+    private val pal: ThemePalette
+        get() = ThemePalettes.of((getPager() as? BasePager)?.isNightMode() ?: false)
+
     override fun createAttr(): AiConfigViewAttr = AiConfigViewAttr()
 
     override fun createEvent(): AiConfigViewEvent = AiConfigViewEvent()
@@ -51,7 +57,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
             View {
                 attr {
@@ -70,7 +76,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                         attr {
                             text("我的预设（点击进入编辑 · 开关启用/停用）")
                             fontSize(13f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                             marginTop(4f)
                             marginBottom(8f)
                         }
@@ -89,7 +95,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                             attr {
                                 text("还没有预设，点击下方「新建预设」开始配置")
                                 fontSize(13f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -102,14 +108,14 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                         height(44f)
                         borderRadius(22f)
                         allCenter()
-                        backgroundColor(Color(0xFFF0F5FF))
-                        border(Border(1f, BorderStyle.SOLID, StockColors.ACCENT))
+                        backgroundColor(ctx.pal.accentChipBg)
+                        border(Border(1f, BorderStyle.SOLID, ctx.pal.accent))
                     }
                     Text {
                         attr {
                             text("＋ 新建预设")
                             fontSize(15f)
-                            color(StockColors.ACCENT)
+                            color(ctx.pal.accent)
                             fontWeightSemiBold()
                         }
                     }
@@ -122,7 +128,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                     attr {
                         text("提示：保存预设时自动校验连接，失败会标红。Key 保存在本地明文（/data/data/.../shared_prefs），仅用于原型演示，请勿用于生产环境。")
                         fontSize(12f)
-                        color(StockColors.TEXT_SUB)
+                        color(ctx.pal.textSub)
                         marginTop(12f)
                         marginBottom(24f)
                     }
@@ -137,7 +143,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                         attr {
                             flex(1f)
                             allCenter()
-                            backgroundColor(Color(0x66000000))
+                            backgroundColor(ctx.pal.maskFull)
                         }
                         event {
                             click { ctx.pendingDelete = null }
@@ -146,7 +152,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                             attr {
                                 width(ctx.pagerData.pageViewWidth - 60f)
                                 borderRadius(12f)
-                                backgroundColor(Color.WHITE)
+                                backgroundColor(ctx.pal.card)
                                 padding(20f)
                             }
                             event {
@@ -157,7 +163,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                     text("删除预设")
                                     fontSize(16f)
                                     fontWeightSemiBold()
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                     marginBottom(10f)
                                 }
                             }
@@ -165,7 +171,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                 attr {
                                     text("确定删除预设「${ctx.pendingDelete?.name}」吗？")
                                     fontSize(14f)
-                                    color(StockColors.TEXT_SUB)
+                                    color(ctx.pal.textSub)
                                 }
                             }
                             View {
@@ -179,14 +185,14 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(Color(0xFFF0F0F0))
+                                        backgroundColor(ctx.pal.chip2Bg)
                                         marginRight(12f)
                                     }
                                     Text {
                                         attr {
                                             text("取消")
                                             fontSize(14f)
-                                            color(StockColors.TEXT_SUB)
+                                            color(ctx.pal.textSub)
                                         }
                                     }
                                     event {
@@ -199,13 +205,13 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(StockColors.UP)
+                                        backgroundColor(ctx.pal.up)
                                     }
                                     Text {
                                         attr {
                                             text("删除")
                                             fontSize(14f)
-                                            color(Color.WHITE)
+                                            color(ctx.pal.onAccent)
                                             fontWeightSemiBold()
                                         }
                                     }
@@ -239,13 +245,13 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                     marginBottom(8f)
                     padding(12f)
                     borderRadius(8f)
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     // 连接失败标红边框
                     border(
                         Border(
                             1f,
                             BorderStyle.SOLID,
-                            if (preset.failed) Color(0xFFF5222D) else Color(0xFFE4E4E4)
+                            if (preset.failed) Color(0xFFF5222D) else ctx.pal.divider
                         )
                     )
                 }
@@ -266,7 +272,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                 fontSize(14f)
                                 fontWeightSemiBold()
                                 color(
-                                    if (preset.enabled) StockColors.TEXT_MAIN
+                                    if (preset.enabled) ctx.pal.textMain
                                     else Color(0xFFBFBFBF)
                                 )
                             }
@@ -281,13 +287,13 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                                     paddingTop(2f)
                                     paddingBottom(2f)
                                     borderRadius(4f)
-                                    backgroundColor(Color(0xFFF0F5FF))
+                                    backgroundColor(ctx.pal.accentChipBg)
                                 }
                                 Text {
                                     attr {
                                         text("当前")
                                         fontSize(10f)
-                                        color(StockColors.ACCENT)
+                                        color(ctx.pal.accent)
                                     }
                                 }
                             }
@@ -320,7 +326,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                             fontSize(11f)
                             color(
                                 if (preset.failed) Color(0xFFF5222D)
-                                else StockColors.TEXT_SUB
+                                else ctx.pal.textSub
                             )
                             marginTop(3f)
                         }
@@ -333,9 +339,9 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                 Switch {
                     attr {
                         isOn(preset.enabled)
-                        onColor(StockColors.ACCENT)
-                        unOnColor(Color(0xFFE0E0E0))
-                        thumbColor(Color.WHITE)
+                        onColor(ctx.pal.accent)
+                        unOnColor(ctx.pal.chip2Bg)
+                        thumbColor(ctx.pal.onAccent)
                         width(44f)
                         height(26f)
                     }
@@ -355,7 +361,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
                         attr {
                             text("删除")
                             fontSize(12f)
-                            color(StockColors.UP)
+                            color(ctx.pal.up)
                         }
                     }
                     event {

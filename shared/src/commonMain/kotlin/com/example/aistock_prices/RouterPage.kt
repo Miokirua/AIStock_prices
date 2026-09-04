@@ -12,6 +12,8 @@ import com.tencent.kuikly.core.views.compose.Button
 import com.tencent.kuikly.core.reactive.handler.*
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.bridgeModule
+import com.example.aistock_prices.stock.ui.ThemePalette
+import com.example.aistock_prices.stock.ui.ThemePalettes
 
 @Page("router", supportInLocal = true)
 internal class RouterPage : BasePager() {
@@ -23,7 +25,7 @@ internal class RouterPage : BasePager() {
         val ctx = this
         return {
             attr {
-                backgroundColor(Color.WHITE)
+                backgroundColor(ctx.pal.bgPage)
             }
             // 背景图
             RouterNavBar {
@@ -239,13 +241,17 @@ internal class RouterNavigationBar : ComposeView<RouterNavigationBarAttr, Compos
         return RouterNavigationBarAttr()
     }
 
+    /** 导航栏当前主题色板（跟随宿主注入的 isNightMode） */
+    private val pal: ThemePalette
+        get() = ThemePalettes.of((getPager() as? BasePager)?.isNightMode() ?: false)
+
     override fun body(): ViewBuilder {
         val ctx = this
         return {
             View {
                 attr {
                     paddingTop(ctx.pagerData.statusBarHeight)
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                 }
                 // nav bar
                 View {
@@ -271,16 +277,23 @@ internal class RouterNavigationBar : ComposeView<RouterNavigationBarAttr, Compos
                 }
 
                 vif({ !ctx.attr.backDisable }) {
-                    Image {
+                    // 返回按钮：文本箭头（夜间/日间随主题变色，替代固定深色位图，保证暗色下可见）
+                    View {
                         attr {
                             absolutePosition(
-                                top = 12f + getPager().pageData.statusBarHeight,
-                                left = 12f,
-                                bottom = 12f,
-                                right = 12f
+                                top = 8f + getPager().pageData.statusBarHeight,
+                                left = 0f,
+                                bottom = 8f
                             )
-                            size(10f, 17f)
-                            src("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAsAAAASBAMAAAB/WzlGAAAAElBMVEUAAAAAAAAAAAAAAAAAAAAAAADgKxmiAAAABXRSTlMAIN/PELVZAGcAAAAkSURBVAjXYwABQTDJqCQAooSCHUAcVROCHBiFECTMhVoEtRYA6UMHzQlOjQIAAAAASUVORK5CYII=")
+                            width(44f)
+                            allCenter()
+                        }
+                        Text {
+                            attr {
+                                text("❮")
+                                fontSize(24f)
+                                color(ctx.pal.textMain)
+                            }
                         }
                         event {
                             click {

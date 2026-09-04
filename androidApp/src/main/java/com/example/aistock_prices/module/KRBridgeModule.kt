@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.render.android.export.KuiklyRenderBaseModule
 import com.tencent.kuikly.core.render.android.export.KuiklyRenderCallback
 import com.example.aistock_prices.KRApplication
 import com.example.aistock_prices.KuiklyRenderActivity
+import com.example.aistock_prices.ThemeController
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -68,6 +69,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "dateFormatter" -> {
                 dateFormatter(params)
+            }
+
+            "setThemeMode" -> {
+                setThemeMode(params)
             }
 
             else -> callback?.invoke(
@@ -163,6 +168,12 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         val data = Date(paramJSONObject.optLong("timeStamp"))
         val format = SimpleDateFormat(paramJSONObject.optString("format"))
         return format.format(data)
+    }
+
+    /** 切换主题模式（跟随系统/深色/浅色）：由 ThemeController 持久化并驱动全页面重建 */
+    private fun setThemeMode(params: String?) {
+        val mode = JSONObject(params ?: "{}").optInt("mode", ThemeController.MODE_AUTO)
+        ThemeController.setMode(mode)
     }
 
     companion object {

@@ -3,7 +3,6 @@ package com.example.aistock_prices.stock.ai
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.setTimeout
-import com.example.aistock_prices.stock.ui.StockColors
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.module.RouterModule
@@ -23,7 +22,7 @@ internal class AiChatPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
 
             RouterNavBar {
@@ -67,5 +66,17 @@ internal class AiChatPage : BasePager() {
     override fun pageDidAppear() {
         super.pageDidAppear()
         chatView?.reload()
+    }
+
+    /** 页面被覆盖/失焦：中断进行中的 AI 生成（避免跳走页面后继续空耗 token） */
+    override fun pageDidDisappear() {
+        super.pageDidDisappear()
+        chatView?.cancelIfSending()
+    }
+
+    /** 页面销毁（返回上一页）：中断进行中的 AI 生成 */
+    override fun pageWillDestroy() {
+        super.pageWillDestroy()
+        chatView?.cancelIfSending()
     }
 }

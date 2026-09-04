@@ -71,6 +71,16 @@ internal class BridgeModule : Module() {
         callNativeMethod("toast", methodArgs, null)
     }
 
+    /**
+     * 切换主题模式（ThemeMode.AUTO/LIGHT/DARK）：
+     * native 侧持久化模式并触发全部已打开页面重建以应用新主题。
+     */
+    fun setThemeMode(mode: Int) {
+        val methodArgs = JSONObject()
+        methodArgs.put("mode", mode)
+        callNativeMethod("setThemeMode", methodArgs, null)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,

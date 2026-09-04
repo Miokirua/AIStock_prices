@@ -1,9 +1,12 @@
 package com.example.aistock_prices.stock.ai
 
+import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
-import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
+import com.example.aistock_prices.stock.ui.ThemePalette
+import com.example.aistock_prices.stock.ui.ThemePalettes
+import com.example.aistock_prices.stock.ui.markdownConfig
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
@@ -48,6 +51,10 @@ import com.tencent.kuiklybase.config.MarkdownConfig
  * - 股票卡片点击进个股详情；含股票标记的消息底部提供「查看完整分析」进结果详情页
  */
 internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
+
+    /** 当前主题色板（跟随宿主注入的 isNightMode；主题切换由宿主 recreate 重建视图） */
+    private val pal: ThemePalette
+        get() = ThemePalettes.of((getPager() as? BasePager)?.isNightMode() ?: false)
 
     private var conversations by observableList<Conversation>()
     /** 当前会话的消息（vfor 需要 ObservableList） */
@@ -116,6 +123,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         val saved = sp.getItem(KEY_ACTIVE_ID)
         if (saved.isNotBlank() && conversations.any { it.id == saved }) activeId = saved
         if (activeId.isBlank() && conversations.isNotEmpty()) activeId = conversations.first().id
+        // 修复：activeId 在上述赋值后才确定，必须再同步一次消息列表（vfor 数据源 activeMsgs），
+        // 否则恢复选中会话后消息区为空（需手动重新点一次会话才显示历史记录）
+        syncActiveMsgs()
         // 进入页面：等列表布局完成后滚动到底端
         scrollToBottom(animated = false)
     }
@@ -162,7 +172,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             ctx.rootContainerRef = this
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
             ctx.refreshTick // 建立响应式依赖：外部 reload() 后整体重跑（重新读取 SP 配置等）
             // ---------- 会话栏 ----------
@@ -208,8 +218,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             absolutePosition(top = ctx.menuCardY, left = ctx.menuCardX)
                             zIndex(150)
                             borderRadius(10f)
-                            backgroundColor(Color.WHITE)
-                            border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                            backgroundColor(ctx.pal.card)
+                            border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                             padding(4f)
                             flexDirectionColumn()
                         }
@@ -217,18 +227,18 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         if (pendingMsg != null) {
                             if (pendingMsg.role == "user") {
                                 // 用户消息：修改（铅笔）、删除（垃圾桶）
-                                ctx.menuItem("✏️", "修改", StockColors.ACCENT) {
+                                ctx.menuItem("✏️", "修改", ctx.pal.accent) {
                                     ctx.startEditUserMessage(pendingMsg.ts)
                                 }.invoke(this)
-                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                ctx.menuItem("🗑️", "删除", ctx.pal.up) {
                                     ctx.deleteMessage(pendingMsg.ts)
                                 }.invoke(this)
                             } else {
                                 // AI 消息：重新生成（循环）、删除（垃圾桶）
-                                ctx.menuItem("🔄", "重新生成", StockColors.ACCENT) {
+                                ctx.menuItem("🔄", "重新生成", ctx.pal.accent) {
                                     ctx.regenerateMessage(pendingMsg.ts)
                                 }.invoke(this)
-                                ctx.menuItem("🗑️", "删除", StockColors.UP) {
+                                ctx.menuItem("🗑️", "删除", ctx.pal.up) {
                                     ctx.deleteMessage(pendingMsg.ts)
                                 }.invoke(this)
                             }
@@ -251,8 +261,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     height(48f)
                     paddingLeft(12f)
                     paddingRight(12f)
-                    backgroundColor(Color.WHITE)
-                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                    backgroundColor(ctx.pal.card)
+                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                 }
                 // 会话切换
                 View {
@@ -264,13 +274,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         paddingLeft(10f)
                         paddingRight(10f)
                         borderRadius(6f)
-                        backgroundColor(Color(0xFFF5F6F8))
+                        backgroundColor(ctx.pal.chipBg)
                     }
                     Text {
                         attr {
                             text("☰ ")
                             fontSize(15f)
-                            color(StockColors.ACCENT)
+                            color(ctx.pal.accent)
                         }
                     }
                     Text {
@@ -278,7 +288,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             text(ctx.activeConv()?.displayName ?: "选择会话")
                             fontSize(14f)
                             fontWeightSemiBold()
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                         }
                     }
                     event {
@@ -298,13 +308,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         paddingLeft(12f)
                         paddingRight(12f)
                         borderRadius(6f)
-                        backgroundColor(Color(0xFFF0F5FF))
+                        backgroundColor(ctx.pal.accentChipBg)
                     }
                     Text {
                         attr {
                             text("＋ 新建")
                             fontSize(13f)
-                            color(StockColors.ACCENT)
+                            color(ctx.pal.accent)
                             fontWeightSemiBold()
                         }
                     }
@@ -327,7 +337,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 attr {
                     absolutePosition(top = 48f, left = 0f, right = 0f, bottom = 0f)
                     zIndex(100)
-                    backgroundColor(Color(0x33000000))
+                    backgroundColor(ctx.pal.maskDim)
                 }
                 event {
                     click { ctx.showConvPanel = false }
@@ -337,7 +347,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     attr {
                         absolutePosition(top = 0f, left = 0f, bottom = 0f)
                         width(drawerWidth)
-                        backgroundColor(Color.WHITE)
+                        backgroundColor(ctx.pal.card)
                         flexDirectionColumn()
                         zIndex(101)
                     }
@@ -352,7 +362,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             padding(14f)
                             paddingLeft(16f)
                             paddingRight(16f)
-                            border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                            border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                         }
                         Text {
                             attr {
@@ -360,7 +370,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 text("会话列表")
                                 fontSize(15f)
                                 fontWeightSemiBold()
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                             }
                         }
                         View {
@@ -370,13 +380,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 paddingLeft(12f)
                                 paddingRight(12f)
                                 borderRadius(6f)
-                                backgroundColor(Color(0xFFF0F5FF))
+                                backgroundColor(ctx.pal.accentChipBg)
                             }
                             Text {
                                 attr {
                                     text("＋ 新建")
                                     fontSize(13f)
-                                    color(StockColors.ACCENT)
+                                    color(ctx.pal.accent)
                                     fontWeightSemiBold()
                                 }
                             }
@@ -401,7 +411,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                     marginTop(6f)
                                     borderRadius(8f)
                                     backgroundColor(
-                                        if (conv.id == ctx.activeId) Color(0xFFF0F5FF) else Color.WHITE
+                                        if (conv.id == ctx.activeId) ctx.pal.accentChipBg else ctx.pal.card
                                     )
                                 }
                                 View {
@@ -414,7 +424,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                             text(conv.displayName)
                                             fontSize(14f)
                                             fontWeightSemiBold()
-                                            color(StockColors.TEXT_MAIN)
+                                            color(ctx.pal.textMain)
                                         }
                                     }
                                     Text {
@@ -427,7 +437,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                                 }
                                             )
                                             fontSize(11f)
-                                            color(StockColors.TEXT_SUB)
+                                            color(ctx.pal.textSub)
                                             marginTop(3f)
                                         }
                                     }
@@ -445,7 +455,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                         attr {
                                             text("删除")
                                             fontSize(12f)
-                                            color(StockColors.UP)
+                                            color(ctx.pal.up)
                                         }
                                     }
                                     event {
@@ -529,13 +539,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             width(ctx.pagerData.pageViewWidth - 80f)
                             borderRadius(12f)
                             padding(12f)
-                            backgroundColor(StockColors.ACCENT)
+                            backgroundColor(ctx.pal.accent)
                         }
                         Text {
                             attr {
                                 text(msg.content)
                                 fontSize(14f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 lineHeight(20f)
                             }
                         }
@@ -546,8 +556,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             maxWidth(ctx.pagerData.pageViewWidth - 40f)
                             borderRadius(12f)
                             padding(14f)
-                            backgroundColor(Color.WHITE)
-                            border(Border(1f, BorderStyle.SOLID, Color(0xFFEBEBEB)))
+                            backgroundColor(ctx.pal.card)
+                            border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                             flexDirectionColumn()
                         }
                         vif({ msg.error }) {
@@ -555,7 +565,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 attr {
                                     text("⚠️ ${msg.content}")
                                     fontSize(13f)
-                                    color(Color(0xFFD4380D))
+                                    color(ctx.pal.errRed)
                                     lineHeight(20f)
                                 }
                             }
@@ -585,13 +595,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 attr {
                                     marginTop(12f)
                                     paddingTop(10f)
-                                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                                 }
                                 Text {
                                     attr {
                                         text("查看完整分析 →")
                                         fontSize(12f)
-                                        color(StockColors.ACCENT)
+                                        color(ctx.pal.accent)
                                     }
                                 }
                                 event {
@@ -622,7 +632,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             attr {
                                 text("⋮")
                                 fontSize(15f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                         event {
@@ -650,8 +660,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     attr {
                         borderRadius(12f)
                         padding(12f)
-                        backgroundColor(Color.WHITE)
-                        border(Border(1f, BorderStyle.SOLID, Color(0xFFEBEBEB)))
+                        backgroundColor(ctx.pal.card)
+                        border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                         flexDirectionRow()
                         alignItemsCenter()
                     }
@@ -664,7 +674,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             text("  AI 思考中...")
                             fontSize(13f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                         }
                     }
                 }
@@ -689,7 +699,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 marginTop(4f)
                                 marginBottom(4f)
                             }
-                            KuiklyMarkdown(content = seg.text, config = MarkdownConfig.Default)
+                            KuiklyMarkdown(
+                                content = seg.text,
+                                config = markdownConfig((getPager() as? BasePager)?.isNightMode() ?: false)
+                            )
                         }
                     }
                 }
@@ -709,8 +722,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     marginBottom(6f)
                     borderRadius(10f)
                     padding(12f)
-                    backgroundColor(Color(0xFFF8F9FB))
-                    border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                    backgroundColor(ctx.pal.chipBg)
+                    border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                     flexDirectionColumn()
                 }
                 // 头部：名称 + 代码 + 进入详情
@@ -726,14 +739,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             text(if (name.isNotBlank()) name else code)
                             fontSize(14f)
                             fontWeightSemiBold()
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                         }
                     }
                     Text {
                         attr {
                             text(code)
                             fontSize(11f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                         }
                     }
                 }
@@ -742,7 +755,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 ctx.quoteTick // 建立响应式依赖
                 vif({ q != null }) {
                     val qq = q!!
-                    val c = StockColors.ofChange(qq.change)
+                    val c = ctx.pal.ofChange(qq.change)
                     View {
                         attr {
                             flexDirectionRow()
@@ -795,7 +808,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             attr {
                                 text(" 行情加载中...")
                                 fontSize(12f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -840,15 +853,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     paddingBottom(8f)
                     paddingLeft(12f)
                     paddingRight(12f)
-                    backgroundColor(Color.WHITE)
-                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                    backgroundColor(ctx.pal.card)
+                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                 }
                 View {
                     attr {
                         flex(1f)
                         height(40f)
                         borderRadius(20f)
-                        backgroundColor(Color(0xFFF5F6F8))
+                        backgroundColor(ctx.pal.chipBg)
                         paddingLeft(14f)
                         paddingRight(14f)
                         flexDirectionRow()
@@ -860,12 +873,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             flex(1f)
                             height(36f)
                             fontSize(14f)
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                             placeholder(
                                 if (ctx.editingUserMsgTs != null) "修改消息后发送，将覆盖原对话…"
                                 else "问问 AI 关于股票的问题..."
                             )
-                            placeholderColor(StockColors.TEXT_SUB)
+                            placeholderColor(ctx.pal.textSub)
                             maxTextLength(500)
                         }
                         event {
@@ -884,13 +897,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             height(40f)
                             borderRadius(20f)
                             allCenter()
-                            backgroundColor(StockColors.ACCENT)
+                            backgroundColor(ctx.pal.accent)
                         }
                         Text {
                             attr {
                                 text(if (ctx.editingUserMsgTs != null) "替换" else "发送")
                                 fontSize(14f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
                             }
                         }
@@ -907,7 +920,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             height(40f)
                             borderRadius(20f)
                             allCenter()
-                            backgroundColor(Color(0xFFE53935))
+                            backgroundColor(ctx.pal.stopRed)
                         }
                         // 停止图标：白色方块（无文字）
                         View {
@@ -915,7 +928,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 width(14f)
                                 height(14f)
                                 borderRadius(2f)
-                                backgroundColor(Color.WHITE)
+                                backgroundColor(ctx.pal.onAccent)
                             }
                         }
                         event {
@@ -941,15 +954,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     paddingRight(8f)
                     paddingTop(8f)
                     paddingBottom(8f)
-                    backgroundColor(Color(0xFFFFF7E6))
-                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFFFE7BA)))
+                    backgroundColor(ctx.pal.warnBg)
+                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.warnBorder))
                 }
                 Text {
                     attr {
                         flex(1f)
                         text("✏️ 修改模式：修改后点击「替换」将删除原消息及之后对话并重新生成")
                         fontSize(12f)
-                        color(Color(0xFFAD6800))
+                        color(ctx.pal.warnText)
                         lineHeight(18f)
                     }
                 }
@@ -964,7 +977,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             text("取消")
                             fontSize(12f)
-                            color(StockColors.ACCENT)
+                            color(ctx.pal.accent)
                         }
                     }
                     event {
@@ -994,7 +1007,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     attr {
                         width(ctx.pagerData.pageViewWidth - 60f)
                         borderRadius(12f)
-                        backgroundColor(Color.WHITE)
+                        backgroundColor(ctx.pal.card)
                         padding(20f)
                         flexDirectionColumn()
                     }
@@ -1003,7 +1016,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             text("AI 问答")
                             fontSize(17f)
                             fontWeightBold()
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                             marginBottom(8f)
                         }
                     }
@@ -1011,7 +1024,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             text("尚未配置 AI 服务。配置后可以在这里与 AI 多轮讨论股票、指数，回复支持 Markdown 与实时行情卡片。")
                             fontSize(13f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                             lineHeight(20f)
                         }
                     }
@@ -1021,13 +1034,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             height(40f)
                             borderRadius(20f)
                             allCenter()
-                            backgroundColor(StockColors.ACCENT)
+                            backgroundColor(ctx.pal.accent)
                         }
                         Text {
                             attr {
                                 text("去设置")
                                 fontSize(15f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
                             }
                         }
@@ -1054,7 +1067,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     attr {
                         flex(1f)
                         allCenter()
-                        backgroundColor(Color(0x66000000))
+                        backgroundColor(ctx.pal.maskFull)
                     }
                     event {
                         click { ctx.pendingDeleteConv = null }
@@ -1063,7 +1076,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         attr {
                             width(ctx.pagerData.pageViewWidth - 60f)
                             borderRadius(12f)
-                            backgroundColor(Color.WHITE)
+                            backgroundColor(ctx.pal.card)
                             padding(20f)
                         }
                         event {
@@ -1074,7 +1087,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 text("删除对话")
                                 fontSize(16f)
                                 fontWeightSemiBold()
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                                 marginBottom(10f)
                             }
                         }
@@ -1082,7 +1095,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                             attr {
                                 text("确定删除对话「${ctx.pendingDeleteConv?.displayName}」吗？删除后不可恢复。")
                                 fontSize(14f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                         View {
@@ -1096,14 +1109,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                     height(40f)
                                     borderRadius(20f)
                                     allCenter()
-                                    backgroundColor(Color(0xFFF0F0F0))
+                                    backgroundColor(ctx.pal.chip2Bg)
                                     marginRight(12f)
                                 }
                                 Text {
                                     attr {
                                         text("取消")
                                         fontSize(14f)
-                                        color(StockColors.TEXT_SUB)
+                                        color(ctx.pal.textSub)
                                     }
                                 }
                                 event {
@@ -1116,13 +1129,13 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                     height(40f)
                                     borderRadius(20f)
                                     allCenter()
-                                    backgroundColor(StockColors.UP)
+                                    backgroundColor(ctx.pal.up)
                                 }
                                 Text {
                                     attr {
                                         text("删除")
                                         fontSize(14f)
-                                        color(Color.WHITE)
+                                        color(ctx.pal.onAccent)
                                         fontWeightSemiBold()
                                     }
                                 }
@@ -1331,6 +1344,19 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         chatSeq++
         sending = false
         bridgeToast("已停止生成")
+    }
+
+    /** 静默中断当前 AI 生成（无 toast）：切走 Tab / 页面被覆盖或销毁 / 退出页面时由宿主调用，避免继续空耗 token */
+    fun cancelIfSending() {
+        if (!sending) return
+        chatSeq++
+        sending = false
+    }
+
+    /** 视图从父容器移除（页面销毁/组件被 vif 移除）前：自动中断在途 AI 生成 */
+    override fun willRemoveFromParentView() {
+        super.willRemoveFromParentView()
+        cancelIfSending()
     }
 
     /** 删除单条消息并持久化 */

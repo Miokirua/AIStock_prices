@@ -90,6 +90,10 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     private fun createPageData(): Map<String, Any> {
         val param = argsToMap()
         param["appId"] = 1
+        // 主题注入：isNightMode（实际是否夜间）驱动页面配色；themeMode（三态）供菜单展示当前模式
+        // （键名须与 shared BasePager 读取一致：BasePager.IS_NIGHT_MODE_KEY / IS_THEME_MODE_KEY）
+        param["isNightMode"] = ThemeController.currentNight()
+        param["themeMode"] = ThemeController.mode
         return param
     }
 
@@ -102,10 +106,12 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         window?.apply {
             addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
             window?.statusBarColor = Color.TRANSPARENT
-            window?.decorView?.systemUiVisibility =
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            var vis = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            // 状态栏图标颜色跟随主题：夜间用浅色图标，日间用深色图标
+            if (!ThemeController.currentNight()) {
+                vis = vis or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            }
+            decorView.systemUiVisibility = vis
         }
 
     }

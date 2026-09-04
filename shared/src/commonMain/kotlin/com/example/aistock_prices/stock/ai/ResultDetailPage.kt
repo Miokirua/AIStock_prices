@@ -4,8 +4,8 @@ import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
-import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
+import com.example.aistock_prices.stock.ui.markdownConfig
 import com.example.kuiklychart.chart.base.ChartDataPoint
 import com.example.kuiklychart.chart.base.ChartDataSet
 import com.example.kuiklychart.chart.line.LineChart
@@ -25,7 +25,6 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuiklybase.KuiklyMarkdown
-import com.tencent.kuiklybase.config.MarkdownConfig
 
 /**
  * AI 问答结果详情页（承接页）：
@@ -54,7 +53,7 @@ internal class ResultDetailPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
 
             RouterNavBar {
@@ -80,7 +79,7 @@ internal class ResultDetailPage : BasePager() {
                         attr {
                             text("  加载中...")
                             fontSize(14f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                         }
                     }
                 }
@@ -103,7 +102,7 @@ internal class ResultDetailPage : BasePager() {
                     View {
                         attr {
                             marginTop(10f)
-                            backgroundColor(Color.WHITE)
+                            backgroundColor(ctx.pal.card)
                             padding(16f)
                             paddingBottom(24f)
                         }
@@ -112,7 +111,7 @@ internal class ResultDetailPage : BasePager() {
                                 text("AI 解读")
                                 fontSize(15f)
                                 fontWeightSemiBold()
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                                 marginBottom(10f)
                             }
                         }
@@ -121,7 +120,7 @@ internal class ResultDetailPage : BasePager() {
                             attr {
                                 width(ctx.pagerData.pageViewWidth - 32f)
                             }
-                            KuiklyMarkdown(content = ctx.content, config = MarkdownConfig.Default)
+                            KuiklyMarkdown(content = ctx.content, config = markdownConfig(ctx.isNightMode()))
                         }
                     }
                     View {
@@ -171,12 +170,12 @@ internal class ResultDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     padding(16f)
                 }
                 vif({ ctx.quote != null }) {
                     val q = ctx.quote!!
-                    val c = StockColors.ofChange(q.change)
+                    val c = ctx.pal.ofChange(q.change)
                     View {
                         attr {
                             flexDirectionRow()
@@ -188,14 +187,14 @@ internal class ResultDetailPage : BasePager() {
                                 text(q.name)
                                 fontSize(18f)
                                 fontWeightBold()
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                             }
                         }
                         Text {
                             attr {
                                 text(q.symbol)
                                 fontSize(13f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -260,7 +259,7 @@ internal class ResultDetailPage : BasePager() {
                     attr {
                         text(label)
                         fontSize(12f)
-                        color(StockColors.TEXT_SUB)
+                        color(ctx.pal.textSub)
                     }
                 }
                 Text {
@@ -268,7 +267,7 @@ internal class ResultDetailPage : BasePager() {
                         text(value)
                         fontSize(14f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginTop(4f)
                     }
                 }
@@ -283,7 +282,7 @@ internal class ResultDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     marginTop(10f)
                     paddingTop(14f)
                     paddingBottom(10f)
@@ -293,7 +292,7 @@ internal class ResultDetailPage : BasePager() {
                         text("走势")
                         fontSize(15f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginLeft(16f)
                         marginBottom(6f)
                     }
@@ -310,7 +309,7 @@ internal class ResultDetailPage : BasePager() {
                             ChartDataSet(
                                 points = points.map { ChartDataPoint(it.price.toFloat()) },
                                 label = "价格",
-                                color = StockColors.ofChange(
+                                color = ctx.pal.ofChange(
                                     (ctx.quote?.price ?: points.last().price) - prevClose
                                 )
                             )

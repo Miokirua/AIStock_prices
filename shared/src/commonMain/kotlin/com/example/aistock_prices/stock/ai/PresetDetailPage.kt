@@ -3,7 +3,7 @@ package com.example.aistock_prices.stock.ai
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.bridgeModule
-import com.example.aistock_prices.stock.ui.StockColors
+import com.example.aistock_prices.stock.ui.ThemePalette
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -73,7 +73,7 @@ internal class PresetDetailPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
 
             RouterNavBar {
@@ -95,14 +95,14 @@ internal class PresetDetailPage : BasePager() {
                     }
 
                     // ---------- 表单 ----------
-                    fieldLabel("预设名（可选，默认取模型名）")
-                    inputField({ ctx.nameRef = it }, "我的预设名", 20) { ctx.presetName = it }
+                    fieldLabel("预设名（可选，默认取模型名）", ctx.pal)
+                    inputField({ ctx.nameRef = it }, "我的预设名", 20, ctx.pal) { ctx.presetName = it }
 
-                    fieldLabel("API Base URL（OpenAI 兼容）")
-                    inputField({ ctx.urlRef = it }, "https://api.xxx.com/v1", 100) { ctx.baseUrl = it }
+                    fieldLabel("API Base URL（OpenAI 兼容）", ctx.pal)
+                    inputField({ ctx.urlRef = it }, "https://api.xxx.com/v1", 100, ctx.pal) { ctx.baseUrl = it }
 
-                    fieldLabel("API Key")
-                    inputField({ ctx.keyRef = it }, "sk-...", 128) { ctx.apiKey = it }
+                    fieldLabel("API Key", ctx.pal)
+                    inputField({ ctx.keyRef = it }, "sk-...", 128, ctx.pal) { ctx.apiKey = it }
 
                     // ---------- 连接测试 ----------
                     View {
@@ -120,7 +120,7 @@ internal class PresetDetailPage : BasePager() {
                                 allCenter()
                                 flexDirectionRow()
                                 alignItemsCenter()
-                                backgroundColor(StockColors.ACCENT)
+                                backgroundColor(ctx.pal.accent)
                             }
                             vif({ ctx.connecting }) {
                                 ActivityIndicator {
@@ -133,7 +133,7 @@ internal class PresetDetailPage : BasePager() {
                                 attr {
                                     text(if (ctx.connecting) "  测试中..." else "连接测试")
                                     fontSize(14f)
-                                    color(Color.WHITE)
+                                    color(ctx.pal.onAccent)
                                     fontWeightSemiBold()
                                 }
                             }
@@ -148,7 +148,7 @@ internal class PresetDetailPage : BasePager() {
                                     text(ctx.connectMsg)
                                     fontSize(12f)
                                     marginLeft(10f)
-                                    color(if (ctx.connectOk) Color(0xFF389E0D) else Color(0xFFD4380D))
+                                    color(if (ctx.connectOk) Color(0xFF389E0D) else ctx.pal.errRed)
                                 }
                             }
                         }
@@ -160,8 +160,8 @@ internal class PresetDetailPage : BasePager() {
                             attr {
                                 marginTop(10f)
                                 borderRadius(8f)
-                                backgroundColor(Color.WHITE)
-                                border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                                backgroundColor(ctx.pal.card)
+                                border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                             }
                             vif({ ctx.models.isEmpty() }) {
                                 View {
@@ -172,7 +172,7 @@ internal class PresetDetailPage : BasePager() {
                                         attr {
                                             text("未获取到模型，请检查 URL / Key 后重试")
                                             fontSize(13f)
-                                            color(StockColors.TEXT_SUB)
+                                            color(ctx.pal.textSub)
                                         }
                                     }
                                 }
@@ -189,7 +189,7 @@ internal class PresetDetailPage : BasePager() {
                                         attr {
                                             text(m)
                                             fontSize(14f)
-                                            color(StockColors.TEXT_MAIN)
+                                            color(ctx.pal.textMain)
                                         }
                                     }
                                     event {
@@ -205,7 +205,7 @@ internal class PresetDetailPage : BasePager() {
                                 View {
                                     attr {
                                         height(1f)
-                                        backgroundColor(Color(0xFFEBEBEB))
+                                        backgroundColor(ctx.pal.divider)
                                     }
                                 }
                             }
@@ -213,8 +213,8 @@ internal class PresetDetailPage : BasePager() {
                     }
 
                     // ---------- 模型名 ----------
-                    fieldLabel("模型名")
-                    inputField({ ctx.modelRef = it }, "deepseek-chat", 64) { ctx.model = it }
+                    fieldLabel("模型名", ctx.pal)
+                    inputField({ ctx.modelRef = it }, "deepseek-chat", 64, ctx.pal) { ctx.model = it }
 
                     // ---------- 保存 ----------
                     View {
@@ -225,7 +225,7 @@ internal class PresetDetailPage : BasePager() {
                             allCenter()
                             backgroundLinearGradient(
                                 Direction.TO_RIGHT,
-                                ColorStop(StockColors.ACCENT, 0f),
+                                ColorStop(ctx.pal.accent, 0f),
                                 ColorStop(Color(0xFF6A5AFF), 1f)
                             )
                         }
@@ -233,7 +233,7 @@ internal class PresetDetailPage : BasePager() {
                             attr {
                                 text(if (ctx.saving) "校验中..." else "保存配置")
                                 fontSize(16f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
                             }
                         }
@@ -246,7 +246,7 @@ internal class PresetDetailPage : BasePager() {
                         attr {
                             text("提示：保存时自动校验连接，失败会在预设列表中标红。Key 保存在本地明文（shared_prefs），仅用于原型演示。")
                             fontSize(12f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                             marginTop(12f)
                             marginBottom(24f)
                         }
@@ -350,12 +350,12 @@ internal class PresetDetailPage : BasePager() {
 
 // ==================== 表单小部件 ====================
 
-private fun ViewContainer<*, *>.fieldLabel(text: String) {
+private fun ViewContainer<*, *>.fieldLabel(text: String, pal: ThemePalette) {
     Text {
         attr {
             text(text)
             fontSize(13f)
-            color(StockColors.TEXT_SUB)
+            color(pal.textSub)
             marginTop(16f)
             marginBottom(8f)
         }
@@ -366,18 +366,19 @@ private fun ViewContainer<*, *>.inputField(
     refSetter: (ViewRef<InputView>) -> Unit,
     placeholder: String,
     maxLen: Int,
+    pal: ThemePalette,
     onTextChange: (String) -> Unit
 ) {
     View {
         attr {
             height(44f)
             borderRadius(8f)
-            backgroundColor(Color.WHITE)
+            backgroundColor(pal.card)
             paddingLeft(12f)
             paddingRight(12f)
             flexDirectionRow()
             alignItemsCenter()
-            border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+            border(Border(1f, BorderStyle.SOLID, pal.divider))
         }
         Input {
             ref { refSetter(it) }
@@ -385,9 +386,9 @@ private fun ViewContainer<*, *>.inputField(
                 flex(1f)
                 height(40f)
                 fontSize(14f)
-                color(StockColors.TEXT_MAIN)
+                color(pal.textMain)
                 placeholder(placeholder)
-                placeholderColor(StockColors.TEXT_SUB)
+                placeholderColor(pal.textSub)
                 maxTextLength(maxLen)
             }
             event {

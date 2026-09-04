@@ -12,7 +12,6 @@ import com.example.aistock_prices.stock.data.MinutePoint
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
-import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
 import com.example.kuiklychart.chart.base.CandleData
 import com.example.kuiklychart.chart.base.ChartDataPoint
@@ -55,6 +54,8 @@ internal class StockDetailPage : BasePager() {
     private var errorMsg by observable("")
     private var aiResult by observable<AiAnalysisResult?>(null)
     private var aiLoading by observable(false)
+    /** AI 分析请求序号：页面退出/重新发起时自增，使旧请求回调失效（防止退出后结果写回） */
+    private var aiSeq = 0
     /** 数据就绪后是否需要自动执行 AI 分析 */
     private var needAutoAnalyze = false
     /** 上次自动分析时的配置签名（配置变化时重新分析） */
@@ -75,7 +76,7 @@ internal class StockDetailPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
 
             RouterNavBar {
@@ -89,15 +90,15 @@ internal class StockDetailPage : BasePager() {
             vif({ ctx.isAiConfigured() && ctx.aiResult != null }) {
                 val level = ctx.aiResult!!.riskLevel
                 val levelColor = when (level) {
-                    AiAnalysisResult.RISK_LOW -> StockColors.ACCENT
-                    AiAnalysisResult.RISK_HIGH -> StockColors.UP
+                    AiAnalysisResult.RISK_LOW -> ctx.pal.accent
+                    AiAnalysisResult.RISK_HIGH -> ctx.pal.up
                     else -> Color(0xFFE6A23C)
                 }
                 View {
                     attr {
                         flexDirectionRow()
                         alignItemsCenter()
-                        backgroundColor(Color.WHITE)
+                        backgroundColor(ctx.pal.card)
                         paddingLeft(16f)
                         paddingRight(16f)
                         paddingTop(6f)
@@ -107,7 +108,7 @@ internal class StockDetailPage : BasePager() {
                         attr {
                             text("风险等级")
                             fontSize(12f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                             marginRight(8f)
                         }
                     }
@@ -147,7 +148,7 @@ internal class StockDetailPage : BasePager() {
                         attr {
                             text("  详情加载中...")
                             fontSize(14f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                         }
                     }
                 }
@@ -164,7 +165,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text(ctx.errorMsg)
                                 fontSize(14f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                                 marginBottom(12f)
                             }
                         }
@@ -172,7 +173,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("点击重试")
                                 fontSize(15f)
-                                color(StockColors.ACCENT)
+                                color(ctx.pal.accent)
                                 textDecorationUnderLine()
                             }
                             event {
@@ -206,12 +207,14 @@ internal class StockDetailPage : BasePager() {
 
     override fun pageDidDisappear() {
         super.pageDidDisappear()
+        cancelAnalyze()
         stopPolling()
         stopLoadTimer()
     }
 
     override fun pageWillDestroy() {
         super.pageWillDestroy()
+        cancelAnalyze()
         stopPolling()
         stopLoadTimer()
     }
@@ -385,14 +388,14 @@ internal class StockDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     padding(16f)
                     paddingTop(12f)
                     paddingBottom(12f)
                 }
                 vif({ ctx.quote != null }) {
                     val q = ctx.quote!!
-                    val c = StockColors.ofChange(q.change)
+                    val c = ctx.pal.ofChange(q.change)
                     // 名称 + 代码 + 涨跌徽标
                     View {
                         attr {
@@ -405,14 +408,14 @@ internal class StockDetailPage : BasePager() {
                                 text(q.name)
                                 fontSize(18f)
                                 fontWeightBold()
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                             }
                         }
                         Text {
                             attr {
                                 text(q.symbol)
                                 fontSize(13f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                                 marginRight(10f)
                             }
                         }
@@ -429,7 +432,7 @@ internal class StockDetailPage : BasePager() {
                                 attr {
                                     text(StockFormat.percent(q.changePercent))
                                     fontSize(12f)
-                                    color(Color.WHITE)
+                                    color(ctx.pal.onAccent)
                                 }
                             }
                         }
@@ -500,7 +503,7 @@ internal class StockDetailPage : BasePager() {
                     attr {
                         text(label)
                         fontSize(12f)
-                        color(StockColors.TEXT_SUB)
+                        color(ctx.pal.textSub)
                     }
                 }
                 Text {
@@ -508,7 +511,7 @@ internal class StockDetailPage : BasePager() {
                         text(value)
                         fontSize(14f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginTop(4f)
                     }
                 }
@@ -523,7 +526,7 @@ internal class StockDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     marginTop(10f)
                     paddingTop(14f)
                     paddingBottom(10f)
@@ -533,7 +536,7 @@ internal class StockDetailPage : BasePager() {
                         text("分时走势")
                         fontSize(15f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginLeft(16f)
                         marginBottom(6f)
                     }
@@ -552,7 +555,7 @@ internal class StockDetailPage : BasePager() {
                                         ChartDataPoint(it.price.toFloat())
                                     },
                                     label = "价格",
-                                    color = StockColors.ofChange(
+                                    color = ctx.pal.ofChange(
                                         (ctx.quote?.price ?: points.last().price) - (ctx.quote?.prevClose ?: points.first().price)
                                     )
                                 )
@@ -560,12 +563,18 @@ internal class StockDetailPage : BasePager() {
                             xAxis {
                                 labels = listOf("09:30", "10:30", "11:30", "13:00", "14:00", "15:00")
                                 showGridLines = false
+                                labelColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF999999)
+                                gridColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0x1A000000)
+                                axisColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0xFFE0E0E0)
                             }
                             yAxis {
                                 min = range.first
                                 max = range.second
                                 showGridLines = true
                                 formatter = { v -> StockFormat.price(v.toDouble()) }
+                                labelColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF999999)
+                                gridColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0x1A000000)
+                                axisColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0xFFE0E0E0)
                             }
                             smooth = true
                             lineWidth = 1.8f
@@ -585,7 +594,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("分时数据暂不可用")
                                 fontSize(13f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -601,7 +610,7 @@ internal class StockDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     marginTop(10f)
                     paddingTop(14f)
                     paddingBottom(10f)
@@ -611,7 +620,7 @@ internal class StockDetailPage : BasePager() {
                         text("日K线")
                         fontSize(15f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginLeft(16f)
                         marginBottom(6f)
                     }
@@ -636,13 +645,19 @@ internal class StockDetailPage : BasePager() {
                             xAxis {
                                 labels = ctx.sparseDateLabels(kData, 6)
                                 showGridLines = false
+                                labelColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF999999)
+                                gridColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0x1A000000)
+                                axisColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0xFFE0E0E0)
                             }
                             yAxis {
                                 showGridLines = true
                                 formatter = { v -> StockFormat.price(v.toDouble()) }
+                                labelColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF999999)
+                                gridColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0x1A000000)
+                                axisColor = if (ctx.isNightMode()) Color(0xFF363D48) else Color(0xFFE0E0E0)
                             }
-                            upColor = StockColors.UP
-                            downColor = StockColors.DOWN
+                            upColor = ctx.pal.up
+                            downColor = ctx.pal.down
                             showVolume = true
                         }
                     }
@@ -658,7 +673,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("K线数据暂不可用")
                                 fontSize(13f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -686,7 +701,7 @@ internal class StockDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     marginTop(10f)
                     padding(16f)
                 }
@@ -703,7 +718,7 @@ internal class StockDetailPage : BasePager() {
                             text("AI 分析与解读")
                             fontSize(15f)
                             fontWeightSemiBold()
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                         }
                     }
                     vif({ ctx.aiResult != null }) {
@@ -714,13 +729,13 @@ internal class StockDetailPage : BasePager() {
                                 paddingLeft(8f)
                                 paddingRight(8f)
                                 borderRadius(4f)
-                                backgroundColor(Color(0xFFF0F0F0))
+                                backgroundColor(ctx.pal.chip2Bg)
                             }
                             Text {
                                 attr {
                                     text("来源：${ctx.aiResult!!.source}")
                                     fontSize(11f)
-                                    color(StockColors.TEXT_SUB)
+                                    color(ctx.pal.textSub)
                                 }
                             }
                         }
@@ -752,7 +767,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("  AI 分析中，请稍候...")
                                 fontSize(14f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                             }
                         }
                     }
@@ -779,14 +794,14 @@ internal class StockDetailPage : BasePager() {
             View {
                 attr {
                     borderRadius(8f)
-                    backgroundColor(Color(0xFFF0F5FF))
+                    backgroundColor(ctx.pal.accentChipBg)
                     padding(14f)
                 }
                 Text {
                     attr {
                         text("尚未配置 AI 服务。配置后可基于实时行情生成趋势判断、买卖点位与风险提醒。")
                         fontSize(13f)
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         lineHeight(20f)
                     }
                 }
@@ -798,13 +813,13 @@ internal class StockDetailPage : BasePager() {
                         paddingRight(16f)
                         borderRadius(17f)
                         allCenter()
-                        backgroundColor(StockColors.ACCENT)
+                        backgroundColor(ctx.pal.accent)
                     }
                     Text {
                         attr {
                             text("去设置")
                             fontSize(14f)
-                            color(Color.WHITE)
+                            color(ctx.pal.onAccent)
                             fontWeightSemiBold()
                         }
                     }
@@ -825,13 +840,13 @@ internal class StockDetailPage : BasePager() {
                     height(44f)
                     borderRadius(22f)
                     allCenter()
-                    backgroundColor(StockColors.ACCENT)
+                    backgroundColor(ctx.pal.accent)
                 }
                 Text {
                     attr {
                         text("开始 AI 分析")
                         fontSize(15f)
-                        color(Color.WHITE)
+                        color(ctx.pal.onAccent)
                         fontWeightSemiBold()
                     }
                 }
@@ -859,13 +874,13 @@ internal class StockDetailPage : BasePager() {
                         paddingLeft(10f)
                         paddingRight(10f)
                         borderRadius(4f)
-                        backgroundColor(StockColors.ofChange(if (result.trend.contains("空")) -1.0 else if (result.trend.contains("多")) 1.0 else 0.0))
+                        backgroundColor(ctx.pal.ofChange(if (result.trend.contains("空")) -1.0 else if (result.trend.contains("多")) 1.0 else 0.0))
                     }
                     Text {
                         attr {
                             text(result.trend)
                             fontSize(13f)
-                            color(Color.WHITE)
+                            color(ctx.pal.onAccent)
                             fontWeightSemiBold()
                         }
                     }
@@ -875,7 +890,7 @@ internal class StockDetailPage : BasePager() {
                         attr {
                             text("  ${result.trendDesc}")
                             fontSize(13f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                             flex(1f)
                         }
                     }
@@ -912,7 +927,7 @@ internal class StockDetailPage : BasePager() {
                             text("买入参考")
                             fontSize(13f)
                             fontWeightSemiBold()
-                            color(StockColors.UP)
+                            color(ctx.pal.up)
                             marginBottom(4f)
                         }
                     }
@@ -921,7 +936,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("· $p")
                                 fontSize(13f)
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                                 marginTop(3f)
                             }
                         }
@@ -939,7 +954,7 @@ internal class StockDetailPage : BasePager() {
                             text("卖出参考")
                             fontSize(13f)
                             fontWeightSemiBold()
-                            color(StockColors.DOWN)
+                            color(ctx.pal.down)
                             marginBottom(4f)
                         }
                     }
@@ -948,7 +963,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("· $p")
                                 fontSize(13f)
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                                 marginTop(3f)
                             }
                         }
@@ -969,7 +984,7 @@ internal class StockDetailPage : BasePager() {
                             text("风险提醒")
                             fontSize(13f)
                             fontWeightSemiBold()
-                            color(StockColors.UP)
+                            color(ctx.pal.up)
                             marginBottom(4f)
                         }
                     }
@@ -978,7 +993,7 @@ internal class StockDetailPage : BasePager() {
                             attr {
                                 text("· $r")
                                 fontSize(13f)
-                                color(StockColors.TEXT_MAIN)
+                                color(ctx.pal.textMain)
                                 marginTop(3f)
                             }
                         }
@@ -991,7 +1006,7 @@ internal class StockDetailPage : BasePager() {
                     attr {
                         text(result.summary)
                         fontSize(13f)
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         lineHeight(20f)
                         marginTop(12f)
                     }
@@ -1004,13 +1019,13 @@ internal class StockDetailPage : BasePager() {
                     height(36f)
                     borderRadius(18f)
                     allCenter()
-                    border(Border(1f, BorderStyle.SOLID, StockColors.ACCENT))
+                    border(Border(1f, BorderStyle.SOLID, ctx.pal.accent))
                 }
                 Text {
                     attr {
                         text("重新分析")
                         fontSize(14f)
-                        color(StockColors.ACCENT)
+                        color(ctx.pal.accent)
                     }
                 }
                 event {
@@ -1024,13 +1039,13 @@ internal class StockDetailPage : BasePager() {
                     height(36f)
                     borderRadius(18f)
                     allCenter()
-                    border(Border(1f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                    border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
                 }
                 Text {
                     attr {
                         text("详细分析")
                         fontSize(14f)
-                        color(StockColors.TEXT_SUB)
+                        color(ctx.pal.textSub)
                     }
                 }
                 event {
@@ -1055,15 +1070,24 @@ internal class StockDetailPage : BasePager() {
 
     /** 执行分析请求（手动 / 自动共用）；结果仅存内存，不持久化（每次进入重新分析） */
     private fun runAnalyze(config: AiConfig, q: StockQuote) {
+        val seq = ++aiSeq
         aiLoading = true
         aiResult = null
         AiAnalysisService.analyze(
             network, config, q,
             minutePoints.toList(), klineBars.toList()
         ) { result ->
+            // 已有更新的请求或页面已退出/销毁（aiSeq 已自增），丢弃本次结果
+            if (seq != aiSeq) return@analyze
             aiLoading = false
             aiResult = result
         }
+    }
+
+    /** 中断在途 AI 分析（页面退出/销毁时调用）：序号失效 + 立即收起 loading，结果回调被丢弃 */
+    private fun cancelAnalyze() {
+        aiSeq++
+        aiLoading = false
     }
 
     /** 打开 AI 服务设置页 */
@@ -1090,7 +1114,7 @@ internal class StockDetailPage : BasePager() {
         return {
             View {
                 attr {
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     marginTop(10f)
                     paddingTop(14f)
                     paddingBottom(14f)
@@ -1100,7 +1124,7 @@ internal class StockDetailPage : BasePager() {
                         text("行情详情")
                         fontSize(15f)
                         fontWeightSemiBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                         marginLeft(16f)
                         marginBottom(10f)
                     }
@@ -1123,10 +1147,10 @@ internal class StockDetailPage : BasePager() {
                         row { cell("k", "均价"); cell("v", StockFormat.price(q.avgPrice)) }
                     }
                     KuiklyTable(data) {
-                        headerBackgroundColor = 0xFFF5F6F8
-                        headerTextColor = 0xFF666666
-                        cellTextColor = 0xFF1A1A1A
-                        borderColor = 0xFFEEEEEE
+                        headerBackgroundColor = if (ctx.isNightMode()) 0xFF2A3039 else 0xFFF5F6F8
+                        headerTextColor = if (ctx.isNightMode()) 0xFF98A2B3 else 0xFF666666
+                        cellTextColor = if (ctx.isNightMode()) 0xFFE6E9EF else 0xFF1A1A1A
+                        borderColor = if (ctx.isNightMode()) 0xFF363D48 else 0xFFEEEEEE
                         cellPaddingH = 16f
                         showZebraStripe = false
                         showOuterBorder = false

@@ -10,8 +10,8 @@ import com.example.aistock_prices.stock.data.StockMeta
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
 import com.example.aistock_prices.stock.data.Watchlist
-import com.example.aistock_prices.stock.ui.StockColors
 import com.example.aistock_prices.stock.ui.StockFormat
+import com.example.aistock_prices.stock.ui.ThemeMode
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
@@ -59,6 +59,8 @@ internal class StockListPage : BasePager() {
     private var showAddDialog by observable(false)
     /** 顶栏「三条横杠」下拉菜单 */
     private var showMenu by observable(false)
+    /** ☰ 菜单「夜间模式」当前档位（跟随系统/深色/浅色），初始来自宿主注入的 pageData themeMode */
+    private var menuMode by observable(ThemeMode.AUTO)
     private var pendingRemove by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
@@ -102,7 +104,7 @@ internal class StockListPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
             // ---------- 顶栏 ----------
             View {
@@ -111,7 +113,7 @@ internal class StockListPage : BasePager() {
                     alignItemsCenter()
                     paddingTop(pagerData.statusBarHeight)
                     height(56f + pagerData.statusBarHeight)
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     paddingLeft(16f)
                     paddingRight(16f)
                 }
@@ -121,7 +123,7 @@ internal class StockListPage : BasePager() {
                         text(if (ctx.currentTab == 0) "自选股" else "AI 问答")
                         fontSize(18f)
                         fontWeightBold()
-                        color(StockColors.TEXT_MAIN)
+                        color(ctx.pal.textMain)
                     }
                 }
                 vif({ ctx.currentTab == 0 }) {
@@ -129,7 +131,7 @@ internal class StockListPage : BasePager() {
                         attr {
                             text("刷新")
                             fontSize(14f)
-                            color(StockColors.ACCENT)
+                            color(ctx.pal.accent)
                             marginRight(16f)
                         }
                         event {
@@ -150,7 +152,7 @@ internal class StockListPage : BasePager() {
                         attr {
                             text("☰")
                             fontSize(20f)
-                            color(StockColors.TEXT_MAIN)
+                            color(ctx.pal.textMain)
                         }
                     }
                     event {
@@ -171,7 +173,7 @@ internal class StockListPage : BasePager() {
                             bottom = 0f
                         )
                         zIndex(100)
-                        backgroundColor(Color(0x33000000))
+                        backgroundColor(ctx.pal.maskDim)
                     }
                     event {
                         click { ctx.showMenu = false }
@@ -179,7 +181,7 @@ internal class StockListPage : BasePager() {
                     View {
                         attr {
                             absolutePosition(top = 0f, left = 0f, right = 0f)
-                            backgroundColor(Color.WHITE)
+                            backgroundColor(ctx.pal.card)
                             paddingTop(6f)
                             paddingBottom(6f)
                         }
@@ -197,7 +199,7 @@ internal class StockListPage : BasePager() {
                                 attr {
                                     text("＋ 添加自选股")
                                     fontSize(15f)
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                 }
                             }
                             event {
@@ -214,7 +216,7 @@ internal class StockListPage : BasePager() {
                                 height(1f)
                                 marginLeft(16f)
                                 marginRight(16f)
-                                backgroundColor(Color(0xFFF0F0F0))
+                                backgroundColor(ctx.pal.chip2Bg)
                             }
                         }
                         // AI 设置
@@ -228,7 +230,7 @@ internal class StockListPage : BasePager() {
                                 attr {
                                     text("⚙ AI 设置")
                                     fontSize(15f)
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                 }
                             }
                             event {
@@ -236,6 +238,50 @@ internal class StockListPage : BasePager() {
                                     ctx.showMenu = false
                                     ctx.openAiConfig()
                                 }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(1f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                backgroundColor(ctx.pal.chip2Bg)
+                            }
+                        }
+                        // 夜间模式（三态循环：跟随系统 -> 深色 -> 浅色 -> 跟随系统）
+                        View {
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                            }
+                            Text {
+                                attr {
+                                    // 图标随当前实际主题响应：夜间显示月亮、日间显示太阳
+                                    text(if (ctx.isNightMode()) "🌙" else "☀️")
+                                    fontSize(15f)
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("夜间模式")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text(ThemeMode.label(ctx.menuMode))
+                                    fontSize(12f)
+                                    color(ctx.pal.textSub)
+                                }
+                            }
+                            event {
+                                click { ctx.cycleThemeMode() }
                             }
                         }
                     }
@@ -268,8 +314,8 @@ internal class StockListPage : BasePager() {
             View {
                 attr {
                     flexDirectionColumn()
-                    backgroundColor(Color.WHITE)
-                    border(Border(0.5f, BorderStyle.SOLID, Color(0xFFE4E4E4)))
+                    backgroundColor(ctx.pal.card)
+                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                 }
                 View {
                     attr {
@@ -288,7 +334,7 @@ internal class StockListPage : BasePager() {
                         attr {
                             flex(1f)
                             allCenter()
-                            backgroundColor(Color(0x66000000))
+                            backgroundColor(ctx.pal.maskFull)
                         }
                         event {
                             click { ctx.showAddDialog = false }
@@ -297,7 +343,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 width(ctx.pagerData.pageViewWidth - 60f)
                                 borderRadius(12f)
-                                backgroundColor(Color.WHITE)
+                                backgroundColor(ctx.pal.card)
                                 padding(20f)
                             }
                             event {
@@ -308,7 +354,7 @@ internal class StockListPage : BasePager() {
                                     text("添加自选股")
                                     fontSize(16f)
                                     fontWeightSemiBold()
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                     marginBottom(14f)
                                 }
                             }
@@ -316,7 +362,7 @@ internal class StockListPage : BasePager() {
                                 attr {
                                     height(44f)
                                     borderRadius(8f)
-                                    backgroundColor(Color(0xFFF5F6F8))
+                                    backgroundColor(ctx.pal.chipBg)
                                     paddingLeft(12f)
                                     paddingRight(12f)
                                     flexDirectionRow()
@@ -328,9 +374,9 @@ internal class StockListPage : BasePager() {
                                         flex(1f)
                                         height(40f)   // 显式高度：Kuikly Input 无 height 时 Android EditText 无可点击区域
                                         fontSize(14f)
-                                        color(StockColors.TEXT_MAIN)
+                                        color(ctx.pal.textMain)
                                         placeholder("如 600519 或 sh600519")
-                                        placeholderColor(StockColors.TEXT_SUB)
+                                        placeholderColor(ctx.pal.textSub)
                                         maxTextLength(12)   // 股票代码最长 8 位 + 市场前缀（sh/sz/bj/hk 2 位）
                                     }
                                     event {
@@ -349,14 +395,14 @@ internal class StockListPage : BasePager() {
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(Color(0xFFF0F0F0))
+                                        backgroundColor(ctx.pal.chip2Bg)
                                         marginRight(12f)
                                     }
                                     Text {
                                         attr {
                                             text("取消")
                                             fontSize(14f)
-                                            color(StockColors.TEXT_SUB)
+                                            color(ctx.pal.textSub)
                                         }
                                     }
                                     event {
@@ -369,13 +415,13 @@ internal class StockListPage : BasePager() {
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(StockColors.ACCENT)
+                                        backgroundColor(ctx.pal.accent)
                                     }
                                     Text {
                                         attr {
                                             text("添加")
                                             fontSize(14f)
-                                            color(Color.WHITE)
+                                            color(ctx.pal.onAccent)
                                             fontWeightSemiBold()
                                         }
                                     }
@@ -396,7 +442,7 @@ internal class StockListPage : BasePager() {
                         attr {
                             flex(1f)
                             allCenter()
-                            backgroundColor(Color(0x66000000))
+                            backgroundColor(ctx.pal.maskFull)
                         }
                         event {
                             click { ctx.pendingRemove = null }
@@ -405,7 +451,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 width(ctx.pagerData.pageViewWidth - 60f)
                                 borderRadius(12f)
-                                backgroundColor(Color.WHITE)
+                                backgroundColor(ctx.pal.card)
                                 padding(20f)
                             }
                             event {
@@ -416,7 +462,7 @@ internal class StockListPage : BasePager() {
                                     text("移出自选")
                                     fontSize(16f)
                                     fontWeightSemiBold()
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                     marginBottom(10f)
                                 }
                             }
@@ -424,7 +470,7 @@ internal class StockListPage : BasePager() {
                                 attr {
                                     text("确定将 ${ctx.pendingRemove?.name} 移出自选吗？")
                                     fontSize(14f)
-                                    color(StockColors.TEXT_SUB)
+                                    color(ctx.pal.textSub)
                                 }
                             }
                             View {
@@ -438,14 +484,14 @@ internal class StockListPage : BasePager() {
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(Color(0xFFF0F0F0))
+                                        backgroundColor(ctx.pal.chip2Bg)
                                         marginRight(12f)
                                     }
                                     Text {
                                         attr {
                                             text("取消")
                                             fontSize(14f)
-                                            color(StockColors.TEXT_SUB)
+                                            color(ctx.pal.textSub)
                                         }
                                     }
                                     event {
@@ -458,13 +504,13 @@ internal class StockListPage : BasePager() {
                                         height(40f)
                                         borderRadius(20f)
                                         allCenter()
-                                        backgroundColor(StockColors.UP)
+                                        backgroundColor(ctx.pal.up)
                                     }
                                     Text {
                                         attr {
                                             text("删除")
                                             fontSize(14f)
-                                            color(Color.WHITE)
+                                            color(ctx.pal.onAccent)
                                             fontWeightSemiBold()
                                         }
                                     }
@@ -491,7 +537,16 @@ internal class StockListPage : BasePager() {
 
     override fun viewDidLoad() {
         super.viewDidLoad()
+        // 菜单展示当前主题档位（宿主注入 pageData 的 themeMode；recreate 后自动取到最新值）
+        menuMode = themeMode
         loadData()
+    }
+
+    /** 循环切换夜间模式档位：本地更新展示 + 通知宿主持久化并重建全部页面应用新主题 */
+    private fun cycleThemeMode() {
+        val next = ThemeMode.next(menuMode)
+        menuMode = next
+        bridgeModule.setThemeMode(next)
     }
 
     /** 页面每次出现：开始 60 秒轮询刷新；AI 问答 Tab 激活时刷新配置态（从设置页返回） */
@@ -506,6 +561,14 @@ internal class StockListPage : BasePager() {
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         stopPolling()
+        // 页面被覆盖/离开前台：若 AI 问答仍在生成则中断（不浪费 token）
+        chatView?.cancelIfSending()
+    }
+
+    override fun pageWillDestroy() {
+        super.pageWillDestroy()
+        stopPolling()
+        chatView?.cancelIfSending()
     }
 
     /** 自选股列表内容（loading / 错误 / 列表） */
@@ -528,7 +591,7 @@ internal class StockListPage : BasePager() {
                         attr {
                             text("  行情加载中...")
                             fontSize(14f)
-                            color(StockColors.TEXT_SUB)
+                            color(ctx.pal.textSub)
                         }
                     }
                 }
@@ -545,7 +608,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 text(ctx.errorMsg)
                                 fontSize(14f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                                 marginBottom(12f)
                             }
                         }
@@ -553,7 +616,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 text("点击重试")
                                 fontSize(15f)
-                                color(StockColors.ACCENT)
+                                color(ctx.pal.accent)
                                 textDecorationUnderLine()
                             }
                             event {
@@ -596,7 +659,7 @@ internal class StockListPage : BasePager() {
                                 attr {
                                     text(ctx.refreshText)
                                     fontSize(13f)
-                                    color(StockColors.TEXT_SUB)
+                                    color(ctx.pal.textSub)
                                 }
                             }
                         }
@@ -611,7 +674,7 @@ internal class StockListPage : BasePager() {
                                     attr {
                                         text("更新于 ${ctx.lastUpdated}")
                                         fontSize(11f)
-                                        color(StockColors.TEXT_SUB)
+                                        color(ctx.pal.textSub)
                                     }
                                 }
                             }
@@ -639,7 +702,7 @@ internal class StockListPage : BasePager() {
                         text(label)
                         fontSize(14f)
                         fontWeightSemiBold()
-                        color(if (ctx.currentTab == index) StockColors.ACCENT else StockColors.TEXT_SUB)
+                        color(if (ctx.currentTab == index) ctx.pal.accent else ctx.pal.textSub)
                     }
                 }
                 vif({ ctx.currentTab == index }) {
@@ -648,7 +711,7 @@ internal class StockListPage : BasePager() {
                             width(24f)
                             height(3f)
                             borderRadius(1.5f)
-                            backgroundColor(StockColors.ACCENT)
+                            backgroundColor(ctx.pal.accent)
                             marginTop(4f)
                         }
                     }
@@ -781,7 +844,7 @@ internal class StockListPage : BasePager() {
     /** 单条行情 item（左滑呼出 置顶/删除 操作条） */
     private fun quoteItem(quote: StockQuote): ViewBuilder {
         val ctx = this
-        val trendColor = StockColors.ofChange(quote.change)
+        val trendColor = ctx.pal.ofChange(quote.change)
         return {
             // 确保 attr 求值前本行 SwipeState 已存在：
             // swipeOffsetOf 里 `swipeStates[code]?.offset` 若 map 无此行会因 ?. 短路读不到
@@ -791,7 +854,7 @@ internal class StockListPage : BasePager() {
                 attr {
                     flexDirectionColumn()
                     height(68f)
-                    backgroundColor(Color.WHITE)
+                    backgroundColor(ctx.pal.card)
                     overflow(true) // 裁剪内容行左移后左侧超出部分
                 }
                 // 底层：左滑操作条（置顶 + 删除），内容行左移后露出
@@ -815,7 +878,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 text(if (Watchlist.isPinned(ctx.sp, quote.code)) "取消置顶" else "置顶")
                                 fontSize(13f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
                             }
                         }
@@ -834,7 +897,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 text("删除")
                                 fontSize(13f)
-                                color(Color.WHITE)
+                                color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
                             }
                         }
@@ -851,7 +914,7 @@ internal class StockListPage : BasePager() {
                         alignItemsCenter()
                         paddingLeft(16f)
                         paddingRight(16f)
-                        backgroundColor(Color.WHITE)
+                        backgroundColor(ctx.pal.card)
                         transform(translate = Translate(0f, 0f, ctx.swipeOffsetOf(quote.code)))
                         animation(
                             Animation.easeInOut(ctx.swipeAnimDuration),
@@ -875,7 +938,7 @@ internal class StockListPage : BasePager() {
                                     text(quote.name)
                                     fontSize(16f)
                                     fontWeightSemiBold()
-                                    color(StockColors.TEXT_MAIN)
+                                    color(ctx.pal.textMain)
                                 }
                             }
                             vif({ Watchlist.isPinned(ctx.sp, quote.code) }) {
@@ -903,7 +966,7 @@ internal class StockListPage : BasePager() {
                             attr {
                                 text(quote.symbol)
                                 fontSize(12f)
-                                color(StockColors.TEXT_SUB)
+                                color(ctx.pal.textSub)
                                 marginTop(4f)
                             }
                         }
@@ -947,7 +1010,7 @@ internal class StockListPage : BasePager() {
                                         "${StockFormat.change(quote.change)}  ${StockFormat.percent(quote.changePercent)}"
                                     )
                                     fontSize(12f)
-                                    color(Color.WHITE)
+                                    color(ctx.pal.onAccent)
                                     textAlignCenter()
                                 }
                             }
@@ -976,7 +1039,7 @@ internal class StockListPage : BasePager() {
                 View {
                     attr {
                         height(1f)
-                        backgroundColor(Color(0xFFEBEBEB))
+                        backgroundColor(ctx.pal.divider)
                     }
                 }
             }

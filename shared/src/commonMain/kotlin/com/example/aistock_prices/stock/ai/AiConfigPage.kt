@@ -2,7 +2,6 @@ package com.example.aistock_prices.stock.ai
 
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
-import com.example.aistock_prices.stock.ui.StockColors
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 
@@ -20,7 +19,7 @@ internal class AiConfigPage : BasePager() {
         return {
             attr {
                 flex(1f)
-                backgroundColor(StockColors.BG_PAGE)
+                backgroundColor(ctx.pal.bgPage)
             }
 
             RouterNavBar {
