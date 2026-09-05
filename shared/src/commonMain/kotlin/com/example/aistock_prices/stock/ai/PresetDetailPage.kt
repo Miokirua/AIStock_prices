@@ -3,6 +3,7 @@ package com.example.aistock_prices.stock.ai
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.bridgeModule
+import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ui.ThemePalette
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
@@ -41,6 +42,8 @@ internal class PresetDetailPage : BasePager() {
     private var baseUrl by observable("")
     private var apiKey by observable("")
     private var model by observable("")
+    /** API Key 是否明文显示（false=密码态 * 掩码；true=明文） */
+    private var apiKeyVisible by observable(false)
     /** 连接测试中 */
     private var connecting by observable(false)
     /** 连接测试结果信息（空 = 未测试） */
@@ -96,13 +99,19 @@ internal class PresetDetailPage : BasePager() {
 
                     // ---------- 表单 ----------
                     fieldLabel("预设名（可选，默认取模型名）", ctx.pal)
-                    inputField({ ctx.nameRef = it }, "我的预设名", 20, ctx.pal) { ctx.presetName = it }
+                    inputField({ ctx.nameRef = it }, "我的预设名", 20, ctx.pal, { ctx.presetName }) { ctx.presetName = it }
 
                     fieldLabel("API Base URL（OpenAI 兼容）", ctx.pal)
-                    inputField({ ctx.urlRef = it }, "https://api.xxx.com/v1", 100, ctx.pal) { ctx.baseUrl = it }
+                    inputField({ ctx.urlRef = it }, "https://api.xxx.com/v1", 100, ctx.pal, { ctx.baseUrl }) { ctx.baseUrl = it }
 
                     fieldLabel("API Key", ctx.pal)
-                    inputField({ ctx.keyRef = it }, "sk-...", 128, ctx.pal) { ctx.apiKey = it }
+                    // 密码态输入：默认 * 掩码显示，眼睛按钮切换明文/密文（vif 双 Input 重建，文本由 apiKey 状态恢复）
+                    vif({ !ctx.apiKeyVisible }) {
+                        ctx.keyFieldRow(true).invoke(this)
+                    }
+                    velse {
+                        ctx.keyFieldRow(false).invoke(this)
+                    }
 
                     // ---------- 连接测试 ----------
                     View {
@@ -214,7 +223,7 @@ internal class PresetDetailPage : BasePager() {
 
                     // ---------- 模型名 ----------
                     fieldLabel("模型名", ctx.pal)
-                    inputField({ ctx.modelRef = it }, "deepseek-chat", 64, ctx.pal) { ctx.model = it }
+                    inputField({ ctx.modelRef = it }, "deepseek-chat", 64, ctx.pal, { ctx.model }) { ctx.model = it }
 
                     // ---------- 保存 ----------
                     View {
@@ -273,6 +282,81 @@ internal class PresetDetailPage : BasePager() {
         urlRef.view?.setText(baseUrl)
         keyRef.view?.setText(apiKey)
         modelRef.view?.setText(model)
+    }
+
+    /** 切换 API Key 明文/密文：vif 会重建 Input，延迟一拍把当前值回填到新实例（ref 已指向新视图） */
+    private fun toggleApiKeyVisible() {
+        apiKeyVisible = !apiKeyVisible
+        setTimeout(50) { keyRef.view?.setText(apiKey) }
+    }
+
+    /** API Key 输入行（isPassword=true 密文态 * 掩码 / false 明文态）；随 vif 分支创建，互不共享实例 */
+    private fun keyFieldRow(isPassword: Boolean): ViewBuilder = {
+        val ctx = this@PresetDetailPage
+        View {
+            attr {
+                height(44f)
+                borderRadius(8f)
+                backgroundColor(ctx.pal.card)
+                paddingLeft(12f)
+                paddingRight(4f)
+                flexDirectionRow()
+                alignItemsCenter()
+                border(Border(1f, BorderStyle.SOLID, ctx.pal.divider))
+            }
+            Input {
+                ref { ctx.keyRef = it }
+                attr {
+                    flex(1f)
+                    height(40f)
+                    fontSize(14f)
+                    color(ctx.pal.textMain)
+                    placeholder("sk-...")
+                    placeholderColor(ctx.pal.textSub)
+                    maxTextLength(128)
+                    if (isPassword) keyboardTypePassword()
+                }
+                event {
+                    textDidChange { ctx.apiKey = it.text }
+                }
+            }
+            // 眼睛：密文态显示「👁」（点按查看明文）；明文态显示「🙈」（点按恢复密文）
+            View {
+                attr {
+                    padding(10f)
+                }
+                Text {
+                    attr {
+                        text(if (isPassword) "👁" else "🙈")
+                        fontSize(15f)
+                    }
+                }
+                event {
+                    click { ctx.toggleApiKeyVisible() }
+                }
+            }
+            // 一键清空（叉）：内容非空时显示
+            vif({ ctx.apiKey.isNotEmpty() }) {
+                View {
+                    attr {
+                        padding(10f)
+                    }
+                    Text {
+                        attr {
+                            text("✕")
+                            fontSize(15f)
+                            color(ctx.pal.textSub)
+                        }
+                    }
+                    event {
+                        click {
+                            ctx.keyRef.view?.setText("")
+                            ctx.apiKey = ""
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /** 连接测试：请求 models 接口，成功展示可用模型下拉 */
@@ -367,21 +451,26 @@ private fun ViewContainer<*, *>.inputField(
     placeholder: String,
     maxLen: Int,
     pal: ThemePalette,
+    value: () -> String,
     onTextChange: (String) -> Unit
 ) {
+    var inputRef: ViewRef<InputView>? = null
     View {
         attr {
             height(44f)
             borderRadius(8f)
             backgroundColor(pal.card)
             paddingLeft(12f)
-            paddingRight(12f)
+            paddingRight(4f)
             flexDirectionRow()
             alignItemsCenter()
             border(Border(1f, BorderStyle.SOLID, pal.divider))
         }
         Input {
-            ref { refSetter(it) }
+            ref {
+                inputRef = it
+                refSetter(it)
+            }
             attr {
                 flex(1f)
                 height(40f)
@@ -393,6 +482,27 @@ private fun ViewContainer<*, *>.inputField(
             }
             event {
                 textDidChange { onTextChange(it.text) }
+            }
+        }
+        // 一键清空（叉）：内容非空时显示
+        vif({ value().isNotEmpty() }) {
+            View {
+                attr {
+                    padding(10f)
+                }
+                Text {
+                    attr {
+                        text("✕")
+                        fontSize(15f)
+                        color(pal.textSub)
+                    }
+                }
+                event {
+                    click {
+                        inputRef?.view?.setText("")
+                        onTextChange("")
+                    }
+                }
             }
         }
     }
