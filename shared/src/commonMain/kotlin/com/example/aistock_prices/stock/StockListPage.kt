@@ -268,7 +268,8 @@ internal class StockListPage : BasePager() {
                             Text {
                                 attr {
                                     flex(1f)
-                                    text("夜间模式")
+                                    // 主文案与图标联动：夜间(🌙)显示「夜间模式」、日间(☀️)显示「日间模式」
+                                    text(if (ctx.isNightMode()) "夜间模式" else "日间模式")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
                                 }

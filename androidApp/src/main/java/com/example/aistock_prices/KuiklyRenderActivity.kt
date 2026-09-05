@@ -3,6 +3,7 @@ package com.example.aistock_prices
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Rect
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -50,7 +51,29 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         hrContainerView = findViewById(R.id.hr_container)
         loadingView = findViewById(R.id.hr_loading)
         errorView = findViewById(R.id.hr_error)
+        setupSoftInputKeyboard()
         kuiklyRenderViewDelegator.onAttach(hrContainerView, "", pageName, createPageData())
+    }
+
+    /**
+     * 软键盘遮挡输入框修复：
+     * 页面采用沉浸式布局（内容延伸到状态栏下，Kuikly 顶部自行 padding statusBarHeight），
+     * 该模式下 windowSoftInputMode=adjustResize 不会压缩窗口高度 → 键盘升起会盖住底部输入条。
+     * 这里监听窗口可见区域，键盘弹出时把 hr_container 底部 padding 设为键盘高度，
+     * 使 Kuikly 容器实际高度被压缩（触发重新布局），底部输入栏被顶到键盘上方。
+     */
+    private fun setupSoftInputKeyboard() {
+        val decor = window.decorView
+        val minKbPx = (100 * resources.displayMetrics.density).toInt() // 阈值：过滤底部导航栏等小差值
+        hrContainerView.viewTreeObserver.addOnGlobalLayoutListener {
+            val rect = Rect()
+            decor.getWindowVisibleDisplayFrame(rect)
+            val keyboardH = decor.height - rect.bottom
+            val target = if (keyboardH > minKbPx) keyboardH else 0
+            if (hrContainerView.paddingBottom != target) {
+                hrContainerView.setPadding(0, 0, 0, target)
+            }
+        }
     }
 
     override fun onDestroy() {
