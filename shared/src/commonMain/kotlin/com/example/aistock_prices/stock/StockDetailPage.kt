@@ -678,7 +678,9 @@ internal class StockDetailPage : BasePager() {
                         }
                         event {
                             onDataPointClick = { _, idx, _ ->
-                                ctx.selectedKlineIndex = idx
+                                // Kuikly vif 条件不变不会重建子树；先设 -1 强制销毁提示条，
+                                // 再延迟一拍设回 idx 重建以承载新内容（避免仅首次生效）
+                                ctx.selectKline(idx)
                             }
                         }
                     }
@@ -1258,6 +1260,12 @@ internal class StockDetailPage : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_config", pageData)
     }
 
+    /** 点选某根 K 线（强制 vif 重建，使提示条实时刷新） */
+    private fun selectKline(idx: Int) {
+        selectedKlineIndex = -1
+        setTimeout(0) { selectedKlineIndex = idx }
+    }
+
     /** 进入 AI 问答页（该股专属会话，自动发问） */
     private fun openAiChat() {
         val pageData = JSONObject().apply {
@@ -1267,7 +1275,7 @@ internal class StockDetailPage : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }
 
-    /** 针对某根 K 线追问 AI：打开该股问答会话并自动发问该时点量价分析 */
+    /** 针对某根 K 线追问 AI：把选中 bar 的完整数据打包进 pageData，供 AI 提问时引用 */
     private fun askAiAboutKline(index: Int) {
         val bar = klineBars.getOrNull(index) ?: return
         val date = if (bar.date.length >= 10) bar.date.substring(0, 10) else bar.date
@@ -1276,9 +1284,18 @@ internal class StockDetailPage : BasePager() {
             put("name", stockName)
             put(
                 "question",
-                "${stockName}（$stockCode）在 $date 的 K 线收盘 ${StockFormat.price(bar.close)}，" +
+                "${stockName}（$stockCode）在 $date 的 K 线（开盘 ${StockFormat.price(bar.open)}、" +
+                        "收盘 ${StockFormat.price(bar.close)}、最高 ${StockFormat.price(bar.high)}、" +
+                        "最低 ${StockFormat.price(bar.low)}、成交量 ${bar.volume}），" +
                         "请结合该时点的量价关系做简要分析"
             )
+            // 选中数据快照：发问时附带，AI 提示词可直接引用而不必自行检索
+            put("barDate", date)
+            put("barOpen", bar.open)
+            put("barClose", bar.close)
+            put("barHigh", bar.high)
+            put("barLow", bar.low)
+            put("barVolume", bar.volume)
         }
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }

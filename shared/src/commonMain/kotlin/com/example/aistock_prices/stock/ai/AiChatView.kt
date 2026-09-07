@@ -28,6 +28,7 @@ import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
+import com.tencent.kuikly.core.reactive.handler.observableSet
 import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.ActivityIndicator
 import com.tencent.kuikly.core.views.DivView
@@ -48,7 +49,7 @@ import com.tencent.kuiklybase.config.MarkdownConfig
  * - 多会话：切换 / 新建 / 删除（删除弹确认框），会话跨启动持久化（SP）
  * - AI 回复：整体返回 + 加载动画；Markdown 渲染 + ```stock 标记的实时行情卡片
  * - 未配置 API：引导卡片 + 「去设置」跳转
- * - 股票卡片点击进个股详情；含股票标记的消息底部提供「查看完整分析」进结果详情页
+ * - 股票卡片点击进个股详情；长回复默认折叠为摘要，点击「查看完整分析 →」展开
  */
 internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
@@ -89,6 +90,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var quoteTick by observable(0)
     /** 外部刷新信号（如从设置页返回）：自增触发 body 重跑，重新求值 isConfigured() 等 SP 依赖 */
     private var refreshTick by observable(0)
+    /** 已展开的 AI 回复消息 ts 集合（用于"查看完整分析"展开/收起，长回复默认折叠为摘要） */
+    private var expandedMsgTs by observableSet<Long>()
 
     private var chatInputRef: ViewRef<InputView>? = null
     /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
@@ -156,6 +159,35 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 // 延迟到视图树稳定后再发问
                 setTimeout(pagerId, 150) { doSend(prompt) }
             }
+        }
+    }
+
+    /**
+     * 详情页点 K 线追问入口：携带选中 bar 数据，prompt 直接内含量价信息。
+     * 避免 AI 因检索不到分时/成交量而给出"缺少数据"的回复。
+     */
+    fun initForStockWithBar(
+        code: String,
+        name: String,
+        question: String,
+        barDate: String,
+        barOpen: Double,
+        barClose: Double,
+        barHigh: Double,
+        barLow: Double,
+        barVolume: Long
+    ) {
+        val conv = ConversationStore.findOrCreateForStock(sp, code, name)
+        activeId = conv.id
+        sp.setItem(KEY_ACTIVE_ID, conv.id)
+        reloadConversations()
+        scrollToBottom(animated = false)
+        // 提示词显式带上选中 bar 的完整 OHLCV，避免 AI 因检索不到该时点数据而误答
+        val augmented = "$question\n\n（数据上下文：$barDate 开盘 ${barOpen}、" +
+                "收盘 ${barClose}、最高 ${barHigh}、最低 ${barLow}、成交量 ${barVolume}）"
+        val last = conv.messages.lastOrNull()
+        if (!(last?.role == "user" && last.content == augmented) && !sending) {
+            setTimeout(pagerId, 150) { doSend(augmented) }
         }
     }
 
@@ -556,6 +588,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 } else {
+                    val longReply = msg.content.length > CHAT_SUMMARY_MAX
+                    val expanded = ctx.expandedMsgTs.contains(msg.ts)
+                    // 长回复默认折叠为摘要，点击「查看完整分析 →」展开
+                    val showFull = !longReply || expanded
                     View {
                         attr {
                             maxWidth(ctx.pagerData.pageViewWidth - 40f)
@@ -584,33 +620,43 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                                 }
                                 val segs = parseChatSegments(msg.content)
                                 val conv = ctx.activeConv()
-                                // 渲染 markdown + stock 标记段
-                                ctx.renderSegments(msg.content).invoke(this)
+                                // 长回复折叠时仅渲染摘要 Markdown + 提示文本，不渲染 stock 卡片（避免误导）
+                                val renderText = if (longReply && !expanded) {
+                                    ctx.summarizeForChat(msg.content)
+                                } else {
+                                    msg.content
+                                }
+                                // 渲染 markdown + stock 标记段（折叠态不渲染 stock 段）
+                                ctx.renderSegments(renderText, includeStock = showFull).invoke(this)
                                 // 兜底：AI 未输出 ```stock 标记，但会话关联了股票 → 自动补一张该股票卡片
-                                vif({ segs.none { it.type == "stock" } && conv?.stockCode != null }) {
+                                // 仅展开态显示，折叠态下 stock 卡片不渲染，避免半截状态
+                                vif({ showFull && segs.none { it.type == "stock" } && conv?.stockCode != null }) {
                                     if (conv?.stockCode != null) {
                                         ctx.stockCard(conv.stockCode, conv.stockName ?: "").invoke(this)
                                     }
                                 }
                             }
                         }
-                        // 含股票标记 → 「查看完整分析」入口（结果详情页）
-                        vif({ parseChatSegments(msg.content).any { it.type == "stock" } }) {
+                        // 「查看完整分析」入口：长回复始终可点（展开/收起），短回复不显示
+                        vif({ longReply }) {
                             View {
                                 attr {
                                     marginTop(12f)
                                     paddingTop(10f)
                                     border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
+                                    flexDirectionRow()
+                                    alignItemsCenter()
                                 }
                                 Text {
                                     attr {
-                                        text("查看完整分析 →")
+                                        flex(1f)
+                                        text(if (expanded) "收起 ▲" else "查看完整分析 →")
                                         fontSize(12f)
                                         color(ctx.pal.accent)
                                     }
                                 }
                                 event {
-                                    click { ctx.event.onOpenResult?.invoke(ctx.activeId, msg.ts) }
+                                    click { ctx.toggleExpand(msg.ts, longReply) }
                                 }
                             }
                         }
@@ -688,12 +734,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     }
 
     /** 组合渲染：markdown 段 -> KuiklyMarkdown；stock 段 -> 行情卡片 */
-    private fun renderSegments(content: String): ViewBuilder {
+    private fun renderSegments(content: String, includeStock: Boolean = true): ViewBuilder {
         val ctx = this
         return {
             parseChatSegments(content).forEach { seg ->
                 when (seg.type) {
-                    "stock" -> ctx.stockCard(seg.code, seg.name).invoke(this)
+                    "stock" -> if (includeStock) {
+                        ctx.stockCard(seg.code, seg.name).invoke(this)
+                    }
                     else -> {
                         // Markdown 段：包固定宽度容器并留出上下间距，
                         // 避免多段/卡片间数据堆积重叠，同时保证换行不溢出
@@ -713,6 +761,29 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 }
             }
         }
+    }
+
+    /**
+     * 长回复折叠态摘要：在换行/标点边界截取前 CHAT_SUMMARY_MAX 字，
+     * 末尾追加省略号。优先在段落/句末切分，避免切断 Markdown 列表/代码块。
+     */
+    private fun summarizeForChat(content: String): String {
+        val max = CHAT_SUMMARY_MAX
+        if (content.length <= max) return content
+        // 尝试在最近的换行或句末标点边界切
+        val cut = (max downTo (max * 3 / 4))
+            .firstOrNull { i ->
+                val c = content[i]
+                c == '\n' || c == '。' || c == '！' || c == '？' || c == ';' || c == ';'
+            } ?: max
+        return content.substring(0, cut + 1).trimEnd() + "\n\n…（已折叠，点击查看完整分析）"
+    }
+
+    /** 切换某条 AI 回复的展开/折叠状态 */
+    private fun toggleExpand(ts: Long, longReply: Boolean) {
+        if (!longReply) return
+        if (expandedMsgTs.contains(ts)) expandedMsgTs.remove(ts)
+        else expandedMsgTs.add(ts)
     }
 
     // ==================== 股票卡片（实时行情） ====================
@@ -1306,15 +1377,25 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         pendingMenuMsgTs = null
         chatInputRef?.view?.setText("")
         inputText = ""
-        // 追加 user 消息并持久化
+        // 追加 user 消息并刷新标题（用最新发问的前 14 字作为标题）
         val updated = conv.copy(
-            messages = conv.messages + ChatMessage("user", text, System.currentTimeMillis())
+            messages = conv.messages + ChatMessage("user", text, System.currentTimeMillis()),
+            title = deriveTitle(text)
         )
         ConversationStore.update(sp, updated)
         reloadConversations()
         scrollToBottom()
         // 公共 chat 逻辑（chatSeq 竞态保护）
         callChat(updated, updated.messages)
+    }
+
+    /**
+     * 由用户消息派生会话标题：取前 14 字，去换行/空白，超长追加省略号。
+     * 用户每次发问都更新到最新主题；股票名保留在 stockName 字段用于上下文关联。
+     */
+    private fun deriveTitle(text: String): String {
+        val flat = text.trim().replace(Regex("\\s+"), " ")
+        return if (flat.length <= 14) flat else flat.substring(0, 14) + "…"
     }
 
     /**
@@ -1461,6 +1542,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
     companion object {
         private const val KEY_ACTIVE_ID = "ai_chat_active_id"
+        /** AI 回复长度超过此阈值默认折叠为摘要（前 N 字） */
+        private const val CHAT_SUMMARY_MAX = 120
     }
 }
 

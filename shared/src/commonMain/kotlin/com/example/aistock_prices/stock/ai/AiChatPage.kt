@@ -58,7 +58,23 @@ internal class AiChatPage : BasePager() {
             // 注意：body() 先于 viewDidLoad() 执行（Pager.didInit 内 created -> body -> viewDidLoad），
             // chatView 已就绪；额外延迟一拍确保视图树稳定后再初始化该股会话并自动发问。
             setTimeout(200) {
-                chatView?.initForStock(code, name, autoSend = true, question = question)
+                // 详情页点 K 线追问：pageData 携带选中 bar 完整 OHLCV 数据
+                val barDate = pagerData.params.optString("barDate")
+                if (question != null && barDate.isNotBlank()) {
+                    chatView?.initForStockWithBar(
+                        code = code,
+                        name = name,
+                        question = question,
+                        barDate = barDate,
+                        barOpen = pagerData.params.optDouble("barOpen", 0.0),
+                        barClose = pagerData.params.optDouble("barClose", 0.0),
+                        barHigh = pagerData.params.optDouble("barHigh", 0.0),
+                        barLow = pagerData.params.optDouble("barLow", 0.0),
+                        barVolume = pagerData.params.optLong("barVolume", 0L)
+                    )
+                } else {
+                    chatView?.initForStock(code, name, autoSend = true, question = question)
+                }
             }
         }
     }
