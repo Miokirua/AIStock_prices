@@ -24,6 +24,7 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.ActivityIndicator
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
+import com.tencent.kuikly.core.views.Modal
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -50,6 +51,10 @@ internal class PresetDetailPage : BasePager() {
     private var connectMsg by observable("")
     /** 连接测试成功（用于信息条颜色） */
     private var connectOk by observable(false)
+    /** 连接测试失败详情（原始错误，点击弹窗展示；成功时为空） */
+    private var connectDetail by observable("")
+    /** 是否展示连接失败详情弹窗 */
+    private var showConnectDetail by observable(false)
     /** 可用模型列表 */
     private var models by observableList<String>()
     /** 模型下拉是否展开 */
@@ -151,13 +156,38 @@ internal class PresetDetailPage : BasePager() {
                             }
                         }
                         vif({ ctx.connectMsg.isNotEmpty() }) {
-                            Text {
+                            View {
                                 attr {
                                     flex(1f)
-                                    text(ctx.connectMsg)
-                                    fontSize(12f)
                                     marginLeft(10f)
-                                    color(if (ctx.connectOk) Color(0xFF389E0D) else ctx.pal.errRed)
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text(ctx.connectMsg)
+                                        fontSize(12f)
+                                        color(if (ctx.connectOk) Color(0xFF389E0D) else ctx.pal.errRed)
+                                    }
+                                }
+                                // 失败时提供「详情 ›」入口，点击弹出完整错误信息
+                                vif({ !ctx.connectOk && ctx.connectDetail.isNotBlank() }) {
+                                    Text {
+                                        attr {
+                                            text("详情 ›")
+                                            fontSize(12f)
+                                            color(ctx.pal.accent)
+                                            marginLeft(6f)
+                                        }
+                                    }
+                                }
+                                event {
+                                    click {
+                                        if (!ctx.connectOk && ctx.connectDetail.isNotBlank()) {
+                                            ctx.showConnectDetail = true
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -258,6 +288,79 @@ internal class PresetDetailPage : BasePager() {
                             color(ctx.pal.textSub)
                             marginTop(12f)
                             marginBottom(24f)
+                        }
+                    }
+                }
+            }
+
+            // ---------- 连接失败详情弹窗（点击「详情 ›」打开，展示原始错误） ----------
+            vif({ ctx.showConnectDetail }) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.showConnectDetail = false }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                padding(20f)
+                                flexDirectionColumn()
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("连接失败详情")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.textMain)
+                                    marginBottom(10f)
+                                }
+                            }
+                            // 固定高度滚动区，承载较长的错误信息
+                            Scroller {
+                                attr {
+                                    width(ctx.pagerData.pageViewWidth - 100f)
+                                    height(180f)
+                                    showScrollerIndicator(false)
+                                }
+                                Text {
+                                    attr {
+                                        text(ctx.connectDetail)
+                                        fontSize(13f)
+                                        color(ctx.pal.textSub)
+                                        lineHeight(20f)
+                                    }
+                                }
+                            }
+                            View {
+                                attr {
+                                    marginTop(16f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.accent)
+                                }
+                                Text {
+                                    attr {
+                                        text("知道了")
+                                        fontSize(14f)
+                                        color(ctx.pal.onAccent)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event {
+                                    click { ctx.showConnectDetail = false }
+                                }
+                            }
                         }
                     }
                 }
@@ -373,6 +476,7 @@ internal class PresetDetailPage : BasePager() {
         }
         connecting = true
         connectMsg = ""
+        connectDetail = ""
         models.clear()
         modelsVisible = false
         AiAnalysisService.fetchModels(network, url, key) { list, err ->
@@ -385,7 +489,9 @@ internal class PresetDetailPage : BasePager() {
                 modelsVisible = true
             } else {
                 connectOk = false
-                connectMsg = "连接失败：$err"
+                // 信息条只展示一句话结论；原始错误存入 connectDetail，点「详情 ›」弹窗查看
+                connectMsg = "连接失败，请检查 URL 与 KEY 是否正确"
+                connectDetail = err
                 modelsVisible = false
             }
         }
@@ -425,7 +531,7 @@ internal class PresetDetailPage : BasePager() {
             if (ok) {
                 bridgeModule.toast("已保存并连接成功")
             } else {
-                bridgeModule.toast("连接失败（$err），已保存并标红，请检查配置")
+                bridgeModule.toast("连接失败，已保存并标红，请检查 URL 与 Key")
             }
             acquireModule<RouterModule>(RouterModule.MODULE_NAME).closePage()
         }

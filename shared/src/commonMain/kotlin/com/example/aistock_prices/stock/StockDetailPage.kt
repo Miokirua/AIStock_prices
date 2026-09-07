@@ -276,7 +276,7 @@ internal class StockDetailPage : BasePager() {
      */
     private fun checkAutoAnalyze() {
         val config = loadAiConfig()
-        if (!config.isConfigured) {
+        if (config == null) {
             needAutoAnalyze = false
             return
         }
@@ -295,13 +295,16 @@ internal class StockDetailPage : BasePager() {
         val q = quote ?: return
         needAutoAnalyze = false
         val config = loadAiConfig()
-        if (!config.isConfigured) return
+        if (config == null) return
         runAnalyze(config, q)
     }
 
-    private fun loadAiConfig(): AiConfig {
+    /** 读取当前可用 AI 配置：仅当存在「启用中的预设」才返回（停用/删除后一律视为未配置） */
+    private fun loadAiConfig(): AiConfig? {
         val sp = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-        return AiAnalysisService.loadConfig(sp)
+        return AiAnalysisService.activePreset(sp)?.let {
+            AiConfig(it.baseUrl, it.apiKey, it.model)
+        }
     }
 
     private val sp: SharedPreferencesModule
@@ -978,12 +981,10 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    private fun isAiConfigured(): Boolean {
-        val config = AiAnalysisService.loadConfig(
+    private fun isAiConfigured(): Boolean =
+        AiAnalysisService.activePreset(
             acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-        )
-        return config.isConfigured
-    }
+        ) != null
 
     /** 未配置引导卡片 */
     private fun aiGuideCard(): ViewBuilder {
@@ -1300,7 +1301,7 @@ internal class StockDetailPage : BasePager() {
     private fun analyze() {
         val q = quote ?: return
         val config = loadAiConfig()
-        if (!config.isConfigured) {
+        if (config == null) {
             bridgeModule.toast("请先配置 AI 服务")
             openAiConfig()
             return

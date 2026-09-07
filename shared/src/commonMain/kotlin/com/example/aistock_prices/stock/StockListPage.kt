@@ -259,8 +259,8 @@ internal class StockListPage : BasePager() {
                             }
                             Text {
                                 attr {
-                                    // 图标随当前实际主题响应：夜间显示月亮、日间显示太阳
-                                    text(if (ctx.isNightMode()) "🌙" else "☀️")
+                                    // 图标表示"点击后将切换到的模式"：当前夜间观感 → 显示太阳（将切到日间）；日间观感 → 月亮
+                                    text(if (ctx.isNightMode()) "☀️" else "🌙")
                                     fontSize(15f)
                                     marginRight(8f)
                                 }
@@ -268,8 +268,8 @@ internal class StockListPage : BasePager() {
                             Text {
                                 attr {
                                     flex(1f)
-                                    // 主文案与图标联动：夜间(🌙)显示「夜间模式」、日间(☀️)显示「日间模式」
-                                    text(if (ctx.isNightMode()) "夜间模式" else "日间模式")
+                                    // 主文案与图标同语义：当前夜间观感显示「日间模式」（点按切到日间），反之亦然
+                                    text(if (ctx.isNightMode()) "日间模式" else "夜间模式")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
                                 }
@@ -543,11 +543,15 @@ internal class StockListPage : BasePager() {
         loadData()
     }
 
-    /** 循环切换夜间模式档位：本地更新展示 + 通知宿主持久化并重建全部页面应用新主题 */
+    /**
+     * 切换主题模式：菜单行展示的是「点击后将切换到的模式」（当前观感的反相）。
+     * 点击直接落地到该模式：跟随系统(AUTO) 首次点击也按观感反相落为显式 深色/浅色，
+     * 避免原 AUTO->DARK 在深色系统下观感无变化造成"点了没反应/文案与结果不符"。
+     */
     private fun cycleThemeMode() {
-        val next = ThemeMode.next(menuMode)
-        menuMode = next
-        bridgeModule.setThemeMode(next)
+        val target = if (isNightMode()) ThemeMode.LIGHT else ThemeMode.DARK
+        menuMode = target
+        bridgeModule.setThemeMode(target)
     }
 
     /** 页面每次出现：开始 60 秒轮询刷新；AI 问答 Tab 激活时刷新配置态（从设置页返回） */

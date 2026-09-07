@@ -90,13 +90,16 @@ object AiAnalysisService {
         sp.setItem(KEY_PRESETS, JSONObject().apply { put("list", arr) }.toString())
     }
 
+    /** 当前启用中的预设：AI 服务是否可用的判定基准（停用/删除后即视为未配置） */
+    fun activePreset(sp: SharedPreferencesModule): AiPreset? = loadPresets(sp).firstOrNull { it.enabled }
+
     /**
-     * 保存配置时自动以模型名创建/更新预设（同 baseUrl+apiKey 则更新；可指定预设名）。
+     * 保存预设：以「预设名」为唯一键——不同预设名（即使 URL/Key/模型相同）作为新预设新增，
+     * 仅同名时更新（列表层已保证同名互斥，这里兜底替换）。
      * @param enabled 是否启用该预设（连接成功才应传 true；false 时不设为当前生效配置）
      */
     fun upsertPreset(sp: SharedPreferencesModule, config: AiConfig, name: String? = null, enabled: Boolean = true) {
         val list = loadPresets(sp).toMutableList()
-        val idx = list.indexOfFirst { it.baseUrl == config.baseUrl && it.apiKey == config.apiKey }
         val preset = AiPreset(
             name = name?.trim()?.takeIf { it.isNotBlank() }
                 ?: config.model.trim().ifBlank { "未命名" },
@@ -105,6 +108,7 @@ object AiAnalysisService {
             model = config.model.trim(),
             enabled = enabled
         )
+        val idx = list.indexOfFirst { it.name == preset.name }
         if (idx >= 0) list[idx] = preset else list.add(preset)
         // 互斥：新预设启用时关闭其他所有预设（保证同时最多一个开启）
         if (enabled) disableOtherEnabled(list, preset.name)
@@ -115,11 +119,9 @@ object AiAnalysisService {
         }
     }
 
-    /** 删除预设；若删除的是当前生效预设则同步清除生效标记 */
+    /** 删除预设（按预设名唯一匹配）；若删除的是当前生效预设则同步清除生效标记 */
     fun removePreset(sp: SharedPreferencesModule, preset: AiPreset) {
-        val list = loadPresets(sp).filterNot {
-            it.baseUrl == preset.baseUrl && it.apiKey == preset.apiKey && it.name == preset.name
-        }
+        val list = loadPresets(sp).filterNot { it.name == preset.name }
         savePresets(sp, list)
         if (activePresetName(sp) == preset.name) {
             setActivePreset(sp, "")
@@ -309,15 +311,28 @@ object AiAnalysisService {
                     put("content", CHAT_SYSTEM_PROMPT)
                 }
             )
-            // 携带最近 30 条上下文（含当前提问）
+            // 携带最近 30 条上下文（含当前提问）。
+            // role 映射：context(数据上下文，K线追问注入) -> system，不占用 user/assistant 槽位；
+            // user 内容若为旧版本内嵌的"（数据上下文：…）"尾巴则剥离后发送（新版本已改独立 context 消息）。
             history.takeLast(30).forEach { m ->
                 if (m.content.isNotBlank()) {
-                    put(
-                        JSONObject().apply {
-                            put("role", m.role)
-                            put("content", m.content)
+                    val role = when (m.role) {
+                        "assistant" -> "assistant"
+                        "user" -> "user"
+                        "context" -> "system"
+                        else -> null
+                    }
+                    if (role != null) {
+                        val content = if (role == "user") stripContextSuffix(m.content) else m.content
+                        if (content.isNotBlank()) {
+                            put(
+                                JSONObject().apply {
+                                    put("role", role)
+                                    put("content", content)
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
         }
