@@ -1,9 +1,12 @@
 package com.example.kuiklychart.chart.candle
 
 import com.example.kuiklychart.chart.base.BaseChartEvent
+import com.example.kuiklychart.chart.base.ChartDataPoint
+import com.example.kuiklychart.chart.base.ChartSelection
 import com.tencent.kuikly.core.base.ComposeView
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Canvas
 
 /**
@@ -21,11 +24,22 @@ import com.tencent.kuikly.core.views.Canvas
  *         upColor = Color(0xFFE0322E)   // 涨 - 红
  *         downColor = Color(0xFF0A9C5C) // 跌 - 绿
  *         showVolume = true
+ *         priceLevels = listOf(PriceLevel(1300f, "支撑", Color(...)))
+ *     }
+ *     event {
+ *         onDataPointClick = { seriesIndex, pointIndex, point -> ... }
  *     }
  * }
  * ```
  */
 class CandleStickChart : ComposeView<CandleStickChartAttr, BaseChartEvent>() {
+
+    /** 最近一次绘制的画布尺寸，供点击命中检测使用 */
+    private var canvasWidth = 0f
+    private var canvasHeight = 0f
+
+    /** 当前选中状态（observable，变更后自动重绘） */
+    private var selection by observable(ChartSelection())
 
     override fun createEvent(): BaseChartEvent {
         return BaseChartEvent()
@@ -42,8 +56,27 @@ class CandleStickChart : ComposeView<CandleStickChartAttr, BaseChartEvent>() {
                 attr {
                     flex(1f)
                 }
+                event {
+                    click {
+                        val renderer = CandleStickChartRenderer(ctx.attr, ctx.canvasWidth, ctx.canvasHeight)
+                        val hit = renderer.hitTest(it.x, it.y)
+                        if (hit != null) {
+                            ctx.selection = hit
+                            val bar = ctx.attr.bars.getOrNull(hit.pointIndex)
+                            if (bar != null) {
+                                ctx.event.onDataPointClick?.invoke(0, hit.pointIndex, ChartDataPoint(bar.close, bar.date))
+                            }
+                        } else {
+                            // 未命中时清除选中
+                            ctx.selection = ChartSelection()
+                        }
+                    }
+                }
             }) { context, w, h ->
-                CandleStickChartRenderer(ctx.attr, w, h).render(context)
+                ctx.canvasWidth = w
+                ctx.canvasHeight = h
+                val renderer = CandleStickChartRenderer(ctx.attr, w, h)
+                renderer.render(context, ctx.selection)
             }
         }
     }

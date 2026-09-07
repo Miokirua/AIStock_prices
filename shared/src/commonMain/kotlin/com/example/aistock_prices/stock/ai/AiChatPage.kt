@@ -53,11 +53,12 @@ internal class AiChatPage : BasePager() {
         super.viewDidLoad()
         val code = pagerData.params.optString("code")
         val name = pagerData.params.optString("name", "该股票")
+        val question = pagerData.params.optString("question").takeIf { it.isNotBlank() }
         if (code.isNotBlank()) {
             // 注意：body() 先于 viewDidLoad() 执行（Pager.didInit 内 created -> body -> viewDidLoad），
             // chatView 已就绪；额外延迟一拍确保视图树稳定后再初始化该股会话并自动发问。
             setTimeout(200) {
-                chatView?.initForStock(code, name, autoSend = true)
+                chatView?.initForStock(code, name, autoSend = true, question = question)
             }
         }
     }

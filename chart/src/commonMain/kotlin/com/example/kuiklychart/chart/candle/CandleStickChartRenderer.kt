@@ -2,10 +2,14 @@ package com.example.kuiklychart.chart.candle
 
 import com.example.kuiklychart.chart.base.ChartArea
 import com.example.kuiklychart.chart.base.ChartMath
+import com.example.kuiklychart.chart.base.ChartSelection
+import com.example.kuiklychart.chart.base.PriceLevel
 import com.example.kuiklychart.chart.base.ValueRange
 import com.example.kuiklychart.chart.base.drawBackground
 import com.example.kuiklychart.chart.base.drawGridAndAxes
+import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.views.CanvasContext
+import com.tencent.kuikly.core.views.TextAlign
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -59,15 +63,77 @@ class CandleStickChartRenderer(
     }
 
     /** 主渲染入口 */
-    fun render(context: CanvasContext) {
+    fun render(context: CanvasContext, selection: ChartSelection) {
         context.drawBackground(attr.backgroundColor, width, height)
         if (attr.bars.isEmpty()) return
         context.drawGridAndAxes(priceArea, attr.xAxis, attr.yAxis, valueRange, xLabels)
         drawCandles(context)
         volumeArea?.let { drawVolume(context, it) }
+        drawPriceLevels(context)
+        if (selection.pointIndex >= 0) {
+            drawSelection(context, selection)
+        }
+    }
+
+    /** 点击命中检测：按 X 坐标反算 K 线索引，未命中返回 null */
+    fun hitTest(touchX: Float, touchY: Float): ChartSelection? {
+        if (attr.bars.isEmpty()) return null
+        if (touchX < area.left || touchX > area.right) return null
+        if (touchY < area.top || touchY > area.bottom) return null
+        val count = attr.bars.size
+        val slotWidth = area.width / count
+        val idx = ((touchX - area.left) / slotWidth).toInt()
+        if (idx < 0 || idx >= count) return null
+        return ChartSelection(0, idx)
     }
 
     // ==================== 私有绘制逻辑 ====================
+
+    /** 绘制价格参考线（支撑/压力位） */
+    private fun drawPriceLevels(context: CanvasContext) {
+        if (attr.priceLevels.isEmpty()) return
+        for (level in attr.priceLevels) {
+            if (level.price <= 0) continue
+            val y = ChartMath.valueToY(level.price, valueRange, priceArea)
+            if (y < priceArea.top || y > priceArea.bottom) continue
+            val color = level.color
+            context.save()
+            context.beginPath()
+            context.moveTo(priceArea.left, y)
+            context.lineTo(priceArea.right, y)
+            context.strokeStyle(color.opacity(0.75f))
+            context.lineWidth(1f)
+            context.stroke()
+            context.restore()
+            if (level.label.isNotBlank()) {
+                context.save()
+                context.font(9f)
+                context.textAlign(TextAlign.RIGHT)
+                context.fillStyle(color)
+                context.fillText(level.label, priceArea.right - 4f, y - 2f)
+                context.restore()
+            }
+        }
+    }
+
+    /** 高亮选中的 K 线槽位 */
+    private fun drawSelection(context: CanvasContext, selection: ChartSelection) {
+        val count = attr.bars.size
+        if (selection.pointIndex !in 0 until count) return
+        val slotWidth = priceArea.width / count
+        val x = ChartMath.indexToX(selection.pointIndex, count, priceArea)
+        val half = slotWidth / 2f
+        context.save()
+        context.beginPath()
+        context.moveTo(x - half, area.top)
+        context.lineTo(x + half, area.top)
+        context.lineTo(x + half, area.bottom)
+        context.lineTo(x - half, area.bottom)
+        context.closePath()
+        context.fillStyle(Color(0x14000000))
+        context.fill()
+        context.restore()
+    }
 
     private fun drawCandles(context: CanvasContext) {
         val count = attr.bars.size

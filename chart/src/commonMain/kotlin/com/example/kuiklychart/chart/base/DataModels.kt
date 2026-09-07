@@ -62,3 +62,18 @@ data class CandleData(
     val low: Float,
     val volume: Long = 0L
 )
+
+/**
+ * 价格参考线（支撑/压力位），绘制在 K 线图上。
+ *
+ * @param price 价位数值
+ * @param label 右侧标签，如「近20日支撑」
+ * @param color 线条与标签颜色
+ * @param dashed 是否虚线（预留字段，当前按实线绘制）
+ */
+data class PriceLevel(
+    val price: Float,
+    val label: String = "",
+    val color: Color = Color(0xFFE6A23C),
+    val dashed: Boolean = false
+)

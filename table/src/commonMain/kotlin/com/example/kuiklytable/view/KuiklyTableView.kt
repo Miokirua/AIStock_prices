@@ -69,7 +69,7 @@ class KuiklyTableView(
 
                 // 数据行 - 直接遍历
                 ctx.tableRows.forEachIndexed { idx, row ->
-                    val bg = if (ctx.tableConfig.showZebraStripe && idx % 2 != 0) {
+                    val bg = row.backgroundColor ?: if (ctx.tableConfig.showZebraStripe && idx % 2 != 0) {
                         ctx.tableConfig.oddRowBackgroundColor
                     } else {
                         ctx.tableConfig.evenRowBackgroundColor
@@ -100,6 +100,9 @@ class KuiklyTableView(
                                     )
                                     paddingLeft(ctx.tableConfig.cellPaddingH)
                                     paddingRight(ctx.tableConfig.cellPaddingH)
+                                    if (cell.backgroundColor != null) {
+                                        backgroundColor(Color(cell.backgroundColor!!))
+                                    }
                                     if (ctx.tableConfig.showColumnBorder) {
                                         borderRight(Border(ctx.tableConfig.borderLineWidth, BorderStyle.SOLID, Color(ctx.tableConfig.borderColor)))
                                     }

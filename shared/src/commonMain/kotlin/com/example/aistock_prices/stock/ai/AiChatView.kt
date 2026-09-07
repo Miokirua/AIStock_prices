@@ -138,7 +138,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     }
 
     /** 外部（ai_chat 独立页）初始化：切换到指定股票会话；autoSend 时自动发问 */
-    fun initForStock(code: String, name: String, autoSend: Boolean) {
+    fun initForStock(code: String, name: String, autoSend: Boolean, question: String? = null) {
         val conv = ConversationStore.findOrCreateForStock(sp, code, name)
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
@@ -146,10 +146,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         scrollToBottom(animated = false)
         if (autoSend && !sending) {
             val last = conv.messages.lastOrNull()
-            val alreadyAutoAsked = last?.role == "user" && last.content.startsWith("帮我分析")
+            val prompt = question ?: "帮我分析${name}（$code）这只股票"
+            val alreadyAutoAsked = if (question == null) {
+                last?.role == "user" && last.content.startsWith("帮我分析")
+            } else {
+                last?.role == "user" && last.content == prompt
+            }
             if (!alreadyAutoAsked) {
                 // 延迟到视图树稳定后再发问
-                setTimeout(pagerId, 150) { doSend("帮我分析${name}（$code）这只股票") }
+                setTimeout(pagerId, 150) { doSend(prompt) }
             }
         }
     }

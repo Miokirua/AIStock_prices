@@ -7,20 +7,25 @@ import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ai.AiAnalysisResult
 import com.example.aistock_prices.stock.ai.AiAnalysisService
 import com.example.aistock_prices.stock.ai.AiConfig
+import com.example.aistock_prices.stock.ai.KeyLevel
+import com.example.aistock_prices.stock.ai.MetricInsight
 import com.example.aistock_prices.stock.data.KLineBar
 import com.example.aistock_prices.stock.data.MinutePoint
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
 import com.example.aistock_prices.stock.ui.StockFormat
+import com.example.aistock_prices.stock.ui.markdownConfig
 import com.example.kuiklychart.chart.base.CandleData
 import com.example.kuiklychart.chart.base.ChartDataPoint
 import com.example.kuiklychart.chart.base.ChartDataSet
+import com.example.kuiklychart.chart.base.PriceLevel
 import com.example.kuiklychart.chart.candle.CandleStickChart
 import com.example.kuiklychart.chart.line.LineChart
 import com.example.kuiklytable.dsl.KuiklyTable
 import com.example.kuiklytable.dsl.tableData
 import com.example.kuiklytable.model.CellAlignment
+import com.tencent.kuiklybase.KuiklyMarkdown
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -54,6 +59,10 @@ internal class StockDetailPage : BasePager() {
     private var errorMsg by observable("")
     private var aiResult by observable<AiAnalysisResult?>(null)
     private var aiLoading by observable(false)
+    /** 当前选中的 K 线索引（点击 K 线触发；-1 表示未选中） */
+    private var selectedKlineIndex by observable(-1)
+    /** AI 深度分析正文（Markdown）是否展开（正文较长，默认收起） */
+    private var markdownExpanded by observable(false)
     /** AI 分析请求序号：页面退出/重新发起时自增，使旧请求回调失效（防止退出后结果写回） */
     private var aiSeq = 0
     /** 数据就绪后是否需要自动执行 AI 分析 */
@@ -659,6 +668,18 @@ internal class StockDetailPage : BasePager() {
                             upColor = ctx.pal.up
                             downColor = ctx.pal.down
                             showVolume = true
+                            priceLevels = ctx.aiResult?.keyLevels?.map { lvl ->
+                                PriceLevel(
+                                    price = lvl.price.toFloat(),
+                                    label = lvl.label,
+                                    color = if (lvl.type == KeyLevel.TYPE_RESISTANCE) ctx.pal.up else ctx.pal.down
+                                )
+                            } ?: emptyList()
+                        }
+                        event {
+                            onDataPointClick = { _, idx, _ ->
+                                ctx.selectedKlineIndex = idx
+                            }
                         }
                     }
                 }
@@ -674,6 +695,101 @@ internal class StockDetailPage : BasePager() {
                                 text("K线数据暂不可用")
                                 fontSize(13f)
                                 color(ctx.pal.textSub)
+                            }
+                        }
+                    }
+                }
+                // 点选提示条：选中某根 K 线后展示该时点信息 + 追问入口
+                vif({ ctx.selectedKlineIndex >= 0 }) {
+                    val idx = ctx.selectedKlineIndex
+                    val bar = ctx.klineBars.getOrNull(idx)
+                    if (bar != null) {
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                marginTop(10f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                paddingTop(8f)
+                                paddingBottom(8f)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                borderRadius(8f)
+                                backgroundColor(ctx.pal.accentChipBg)
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text(
+                                        "${if (bar.date.length >= 10) bar.date.substring(5, 10) else bar.date} " +
+                                                "收盘 ${StockFormat.price(bar.close)}"
+                                    )
+                                    fontSize(12f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("问问 AI")
+                                    fontSize(12f)
+                                    color(ctx.pal.accent)
+                                    fontWeightSemiBold()
+                                }
+                                event {
+                                    click { ctx.askAiAboutKline(idx) }
+                                }
+                            }
+                        }
+                    }
+                }
+                // 关键价位说明（AI 结构化支撑/压力，与 K 线参考线对应）
+                vif({ ctx.aiResult != null && ctx.aiResult!!.keyLevels.isNotEmpty() }) {
+                    val levels = ctx.aiResult!!.keyLevels
+                    View {
+                        attr {
+                            flexDirectionColumn()
+                            marginTop(10f)
+                            marginLeft(16f)
+                            marginRight(16f)
+                        }
+                        levels.forEach { lvl ->
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    marginTop(3f)
+                                    marginBottom(3f)
+                                }
+                                View {
+                                    attr {
+                                        width(8f)
+                                        height(8f)
+                                        borderRadius(4f)
+                                        backgroundColor(
+                                            if (lvl.type == KeyLevel.TYPE_RESISTANCE) ctx.pal.up else ctx.pal.down
+                                        )
+                                        marginRight(6f)
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text("${lvl.label} ${StockFormat.price(lvl.price)}")
+                                        fontSize(12f)
+                                        fontWeightSemiBold()
+                                        color(ctx.pal.textMain)
+                                    }
+                                }
+                                vif({ lvl.desc.isNotEmpty() }) {
+                                    Text {
+                                        attr {
+                                            text("  ${lvl.desc}")
+                                            fontSize(11f)
+                                            color(ctx.pal.textSub)
+                                            flex(1f)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1012,6 +1128,49 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
             }
+            // AI 深度分析正文（Markdown，可展开收起）
+            vif({ result.markdown.isNotBlank() }) {
+                View {
+                    attr {
+                        marginTop(12f)
+                        flexDirectionRow()
+                        alignItemsCenter()
+                        height(32f)
+                        borderRadius(8f)
+                        paddingLeft(10f)
+                        paddingRight(10f)
+                        backgroundColor(ctx.pal.chip2Bg)
+                    }
+                    Text {
+                        attr {
+                            text("深度分析正文")
+                            fontSize(13f)
+                            fontWeightSemiBold()
+                            color(ctx.pal.textMain)
+                            flex(1f)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text(if (ctx.markdownExpanded) "收起" else "展开")
+                            fontSize(13f)
+                            color(ctx.pal.accent)
+                        }
+                        event {
+                            click { ctx.markdownExpanded = !ctx.markdownExpanded }
+                        }
+                    }
+                }
+                vif({ ctx.markdownExpanded }) {
+                    View {
+                        attr {
+                            marginTop(8f)
+                            width(ctx.pagerData.pageViewWidth - 64f)
+                        }
+                        KuiklyMarkdown(content = result.markdown, config = markdownConfig(ctx.isNightMode()))
+                    }
+                }
+            }
             // 重新分析
             View {
                 attr {
@@ -1108,6 +1267,22 @@ internal class StockDetailPage : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }
 
+    /** 针对某根 K 线追问 AI：打开该股问答会话并自动发问该时点量价分析 */
+    private fun askAiAboutKline(index: Int) {
+        val bar = klineBars.getOrNull(index) ?: return
+        val date = if (bar.date.length >= 10) bar.date.substring(0, 10) else bar.date
+        val pageData = JSONObject().apply {
+            put("code", stockCode)
+            put("name", stockName)
+            put(
+                "question",
+                "${stockName}（$stockCode）在 $date 的 K 线收盘 ${StockFormat.price(bar.close)}，" +
+                        "请结合该时点的量价关系做简要分析"
+            )
+        }
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
+    }
+
     /** 行情详情表 */
     private fun detailTableCard(): ViewBuilder {
         val ctx = this
@@ -1131,20 +1306,32 @@ internal class StockDetailPage : BasePager() {
                 }
                 vif({ ctx.quote != null }) {
                     val q = ctx.quote!!
+                    // AI 指标注解 → 详情表对应行高亮
+                    val metricByKey = ctx.aiResult?.metrics?.associateBy { it.key } ?: emptyMap()
+                    val hlColor = ctx.pal.accentChipBg.hexColor
+                    val rows = listOf(
+                        Triple("open", "今开", StockFormat.price(q.open)),
+                        Triple("high", "最高", StockFormat.price(q.high)),
+                        Triple("low", "最低", StockFormat.price(q.low)),
+                        Triple("prevClose", "昨收", StockFormat.price(q.prevClose)),
+                        Triple("change", "涨跌额", StockFormat.change(q.change)),
+                        Triple("changePercent", "涨跌幅", StockFormat.percent(q.changePercent)),
+                        Triple("volume", "成交量", StockFormat.volume(q.volume)),
+                        Triple("amount", "成交额", StockFormat.amount(q.amount)),
+                        Triple("turnover", "换手率", "${StockFormat.price(q.turnover)}%"),
+                        Triple("amplitude", "振幅", "${StockFormat.price(q.amplitude)}%"),
+                        Triple("avgPrice", "均价", StockFormat.price(q.avgPrice))
+                    )
                     val data = tableData {
                         column("k", "指标", width = 110f)
                         column("v", "数值", alignment = CellAlignment.RIGHT)
-                        row { cell("k", "今开"); cell("v", StockFormat.price(q.open)) }
-                        row { cell("k", "最高"); cell("v", StockFormat.price(q.high)) }
-                        row { cell("k", "最低"); cell("v", StockFormat.price(q.low)) }
-                        row { cell("k", "昨收"); cell("v", StockFormat.price(q.prevClose)) }
-                        row { cell("k", "涨跌额"); cell("v", StockFormat.change(q.change)) }
-                        row { cell("k", "涨跌幅"); cell("v", StockFormat.percent(q.changePercent)) }
-                        row { cell("k", "成交量"); cell("v", StockFormat.volume(q.volume)) }
-                        row { cell("k", "成交额"); cell("v", StockFormat.amount(q.amount)) }
-                        row { cell("k", "换手率"); cell("v", "${StockFormat.price(q.turnover)}%") }
-                        row { cell("k", "振幅"); cell("v", "${StockFormat.price(q.amplitude)}%") }
-                        row { cell("k", "均价"); cell("v", StockFormat.price(q.avgPrice)) }
+                        rows.forEach { (key, label, value) ->
+                            row {
+                                if (metricByKey.containsKey(key)) backgroundColor(hlColor)
+                                cell("k", label)
+                                cell("v", value)
+                            }
+                        }
                     }
                     KuiklyTable(data) {
                         headerBackgroundColor = if (ctx.isNightMode()) 0xFF2A3039 else 0xFFF5F6F8
@@ -1156,6 +1343,50 @@ internal class StockDetailPage : BasePager() {
                         showOuterBorder = false
                         stickyHeader = false
                         editable = false
+                    }
+                    // AI 指标注解说明（对应上表高亮行）
+                    val metrics = ctx.aiResult?.metrics ?: emptyList()
+                    if (metrics.isNotEmpty()) {
+                        View {
+                            attr {
+                                marginTop(10f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                paddingTop(10f)
+                                paddingBottom(10f)
+                                borderRadius(8f)
+                                backgroundColor(ctx.pal.accentChipBg)
+                            }
+                            metrics.forEach { m ->
+                                View {
+                                    attr {
+                                        flexDirectionRow()
+                                        marginTop(4f)
+                                        marginBottom(4f)
+                                    }
+                                    Text {
+                                        attr {
+                                            text(m.name)
+                                            fontSize(12f)
+                                            color(ctx.pal.accent)
+                                            fontWeightSemiBold()
+                                            marginRight(6f)
+                                        }
+                                    }
+                                    Text {
+                                        attr {
+                                            text(m.comment)
+                                            fontSize(12f)
+                                            color(ctx.pal.textMain)
+                                            flex(1f)
+                                            lineHeight(18f)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -2,6 +2,7 @@ package com.example.kuiklychart.chart.candle
 
 import com.example.kuiklychart.chart.base.BaseChartAttr
 import com.example.kuiklychart.chart.base.CandleData
+import com.example.kuiklychart.chart.base.PriceLevel
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.reactive.handler.observable
 
@@ -41,4 +42,7 @@ class CandleStickChartAttr : BaseChartAttr() {
 
     /** 是否显示成交量副图 */
     var showVolume: Boolean by observable(true)
+
+    /** 价格参考线（支撑/压力位） */
+    var priceLevels: List<PriceLevel> by observable(emptyList())
 }

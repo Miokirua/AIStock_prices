@@ -67,10 +67,16 @@ class TableDataBuilder {
 
 class RowBuilder {
     private val cells = mutableMapOf<String, TableCell>()
+    private var rowBackgroundColor: Long? = null
 
     fun cell(key: String, value: String) {
         cells[key] = TableCell(value)
     }
 
-    fun build(): TableRow = TableRow(cells)
+    /** 设置整行背景色（覆盖斑马纹/主题默认色），用于行级高亮 */
+    fun backgroundColor(color: Long) {
+        rowBackgroundColor = color
+    }
+
+    fun build(): TableRow = TableRow(cells, backgroundColor = rowBackgroundColor)
 }

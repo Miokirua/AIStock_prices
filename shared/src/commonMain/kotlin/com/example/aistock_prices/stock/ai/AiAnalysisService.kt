@@ -375,9 +375,13 @@ object AiAnalysisService {
                 ?.optJSONObject("message")
                 ?.optString("content")
                 .orEmpty()
-            parseResult(content)?.let {
-                callback(it)
-            } ?: callback(localFallback(quote, kline))
+            val parsed = parseResult(content, quote, kline)
+            if (parsed != null) {
+                callback(parsed)
+            } else {
+                // 解析失败：保留 AI 的 Markdown 正文展示，结构化字段用本地规则兜底（联动不丢）
+                callback(localFallback(quote, kline).copy(markdown = content, source = AiAnalysisResult.SOURCE_AI))
+            }
         }
     }
 
@@ -393,12 +397,19 @@ object AiAnalysisService {
                     put("role", "system")
                     put(
                         "content",
-                        "你是一名专业的A股技术分析助手。请基于用户提供的行情数据，用中文输出结构化JSON分析，" +
-                                "不要输出JSON以外的任何内容。JSON格式：" +
+                        "你是一名专业的A股技术分析助手。请基于用户提供的行情数据，用中文输出一份结构化JSON分析，" +
+                                "并将整份JSON放在一个 ```json 代码围栏中，围栏之外不要输出任何内容。" +
+                                "JSON格式（字段务必齐全）：" +
                                 "{\"trend\":\"看多/看空/震荡等标签\",\"trendDesc\":\"趋势判断说明\",\"suggestion\":\"操作建议\"," +
-                                "\"buyPoints\":[\"买入参考点位1\",\"买入参考点位2\"],\"sellPoints\":[\"卖出参考点位1\"]," +
-                                "\"risks\":[\"风险提醒1\",\"风险提醒2\"],\"riskLevel\":\"低/中/高（对当前风险的综合评级，必须三选一）\"," +
-                                "\"summary\":\"行情总结\"}"
+                                "\"buyPoints\":[\"买入参考点位1\"],\"sellPoints\":[\"卖出参考点位1\"]," +
+                                "\"risks\":[\"风险提醒1\"],\"riskLevel\":\"低/中/高（必须三选一）\",\"summary\":\"行情总结\"," +
+                                "\"markdown\":\"一段完整的Markdown深度分析正文（含小标题、加粗、列表，供用户阅读）\"," +
+                                "\"keyLevels\":[{\"price\":1520.0,\"type\":\"support\",\"label\":\"短线支撑\",\"desc\":\"近20日低点附近\"}]," +
+                                "\"metrics\":[{\"key\":\"turnover\",\"name\":\"换手率\",\"comment\":\"交投活跃，注意高位放量\"}]}" +
+                                "说明：keyLevels 为数值型关键价位，type 仅取 support(支撑) 或 resistance(压力)，" +
+                                "price 用具体价格数字，label 简短、desc 一句话；" +
+                                "metrics 是对具体指标的注解，key 仅限 pe/turnover/amplitude/volume/amount/avgPrice/high/low/open/prevClose，" +
+                                "name 用中文名、comment 一句解读；markdown 字段必须包含完整可读的分析正文。"
                     )
                 }
             )
@@ -448,14 +459,53 @@ object AiAnalysisService {
         return sb.toString()
     }
 
-    /** 解析模型返回的 JSON 分析内容 */
-    private fun parseResult(content: String): AiAnalysisResult? {
+    /** 解析模型返回的 JSON 分析内容（支持 ```json 围栏剥离；含 keyLevels/metrics/markdown） */
+    private fun parseResult(content: String, quote: StockQuote, kline: List<KLineBar>): AiAnalysisResult? {
         if (content.isBlank()) return null
-        val json = try {
-            JSONObject(content)
+        var json: JSONObject? = try {
+            JSONObject(content.trim())
         } catch (e: Throwable) {
-            return null
+            null
         }
+        if (json == null) {
+            val fenced = extractJsonContent(content)
+            if (fenced != null) {
+                json = try {
+                    JSONObject(fenced)
+                } catch (e: Throwable) {
+                    null
+                }
+            }
+        }
+        if (json == null) return null
+
+        val keyLevels = json.optJSONArray("keyLevels")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val price = o.optDouble("price") ?: 0.0
+                if (price <= 0) return@mapNotNull null
+                KeyLevel(
+                    price = price,
+                    type = o.optString("type", "support"),
+                    label = o.optString("label", ""),
+                    desc = o.optString("desc", "")
+                )
+            }
+        } ?: emptyList()
+
+        val metrics = json.optJSONArray("metrics")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val key = o.optString("key", "")
+                if (key.isBlank()) return@mapNotNull null
+                MetricInsight(
+                    key = key,
+                    name = o.optString("name", key),
+                    comment = o.optString("comment", "")
+                )
+            }
+        } ?: emptyList()
+
         return AiAnalysisResult(
             trend = json.optString("trend", ""),
             trendDesc = json.optString("trendDesc", ""),
@@ -471,8 +521,28 @@ object AiAnalysisService {
             } ?: emptyList(),
             summary = json.optString("summary", ""),
             riskLevel = json.optString("riskLevel", AiAnalysisResult.RISK_MID),
-            source = AiAnalysisResult.SOURCE_AI
+            source = AiAnalysisResult.SOURCE_AI,
+            markdown = json.optString("markdown", ""),
+            keyLevels = keyLevels,
+            metrics = metrics
         )
+    }
+
+    /** 从模型返回中剥离 ```json / ``` 围栏，返回内部 JSON 文本；无围栏返回 null */
+    private fun extractJsonContent(content: String): String? {
+        val t = content.trim()
+        val fence = "```"
+        val start = t.indexOf(fence)
+        if (start < 0) return null
+        var bodyStart = start + fence.length
+        // 首围栏后可能紧跟 "json" 语言标识，跳到其后换行
+        val nl = t.indexOf('\n', bodyStart)
+        if (nl >= 0 && nl < bodyStart + 12) {
+            bodyStart = nl + 1
+        }
+        val end = t.indexOf(fence, bodyStart)
+        if (end < 0) return null
+        return t.substring(bodyStart, end).trim()
     }
 
     // ==================== 本地规则降级 ====================
@@ -537,6 +607,56 @@ object AiAnalysisService {
             else -> AiAnalysisResult.RISK_LOW
         }
 
+        // 结构化关键价位：均价支撑 + 近20日高低点
+        val keyLevels = mutableListOf<KeyLevel>()
+        if (avg > 0) {
+            keyLevels.add(KeyLevel(avg, KeyLevel.TYPE_SUPPORT, "均价支撑", "今日均价附近"))
+        }
+        if (kline.isNotEmpty()) {
+            val low20 = kline.takeLast(20).minOfOrNull { it.low } ?: quote.low
+            val high20 = kline.takeLast(20).maxOfOrNull { it.high } ?: quote.high
+            keyLevels.add(KeyLevel(low20, KeyLevel.TYPE_SUPPORT, "近20日支撑", "近20日低点附近"))
+            keyLevels.add(KeyLevel(high20, KeyLevel.TYPE_RESISTANCE, "近20日压力", "近20日高点附近"))
+        }
+
+        // 结构化指标注解：换手率/振幅/涨跌
+        val metrics = mutableListOf<MetricInsight>()
+        if (quote.turnover >= 10.0) {
+            metrics.add(MetricInsight("turnover", "换手率", "交投过热，谨防冲高回落"))
+        } else if (quote.turnover >= 5.0) {
+            metrics.add(MetricInsight("turnover", "换手率", "交投活跃，资金关注度上升"))
+        }
+        if (quote.amplitude >= 5.0) {
+            metrics.add(MetricInsight("amplitude", "振幅", "波动明显加剧，注意仓位控制"))
+        } else if (quote.amplitude >= 3.0) {
+            metrics.add(MetricInsight("amplitude", "振幅", "波动中等，短线可波段操作"))
+        }
+        if (pct < 0) {
+            metrics.add(MetricInsight("changePercent", "涨跌幅", "股价跌破昨收，短线情绪偏弱"))
+        }
+
+        // Markdown 正文（降级链路的可读展示）
+        val markdown = buildString {
+            append("## ${quote.name} 行情解读\n\n")
+            append("**趋势**：$trend。$trendDesc\n\n")
+            append("**操作建议**：$suggestion\n\n")
+            append("**行情总结**：$summary\n\n")
+            if (buyPoints.isNotEmpty()) {
+                append("**买入参考**：\n")
+                buyPoints.forEach { append("- $it\n") }
+                append("\n")
+            }
+            if (sellPoints.isNotEmpty()) {
+                append("**卖出参考**：\n")
+                sellPoints.forEach { append("- $it\n") }
+                append("\n")
+            }
+            if (risks.isNotEmpty()) {
+                append("**风险提示**：\n")
+                risks.forEach { append("- $it\n") }
+            }
+        }
+
         return AiAnalysisResult(
             trend = trend,
             trendDesc = trendDesc,
@@ -546,7 +666,10 @@ object AiAnalysisService {
             risks = risks,
             summary = summary,
             riskLevel = riskLevel,
-            source = AiAnalysisResult.SOURCE_RULE
+            source = AiAnalysisResult.SOURCE_RULE,
+            markdown = markdown,
+            keyLevels = keyLevels,
+            metrics = metrics
         )
     }
 }
