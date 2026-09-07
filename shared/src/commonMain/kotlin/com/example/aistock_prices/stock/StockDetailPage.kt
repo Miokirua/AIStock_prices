@@ -61,6 +61,8 @@ internal class StockDetailPage : BasePager() {
     private var aiLoading by observable(false)
     /** 当前选中的 K 线索引（点击 K 线触发；-1 表示未选中） */
     private var selectedKlineIndex by observable(-1)
+    /** 当前选中的分时点索引（点击分时图触发；-1 表示未选中） */
+    private var selectedMinuteIndex by observable(-1)
     /** AI 深度分析正文（Markdown）是否展开（正文较长，默认收起） */
     private var markdownExpanded by observable(false)
     /** AI 分析请求序号：页面退出/重新发起时自增，使旧请求回调失效（防止退出后结果写回） */
@@ -554,6 +556,79 @@ internal class StockDetailPage : BasePager() {
                     val points = ctx.minutePoints
                     val range = ctx.minuteRange(points)
                     val width = pageWidth - 16f
+                    // 选中点气泡（点击分时图后展示该时点信息；不接 AI，单分钟粒度追问意义不大）
+                    vif({ ctx.selectedMinuteIndex >= 0 }) {
+                        val idx = ctx.selectedMinuteIndex
+                        val mp = ctx.minutePoints.getOrNull(idx)
+                        if (mp != null) {
+                            val prevClose = ctx.quote?.prevClose ?: points.first().price
+                            val change = mp.price - prevClose
+                            val pct = if (prevClose > 0) change / prevClose * 100 else 0.0
+                            val upColor = ctx.pal.up
+                            val downColor = ctx.pal.down
+                            val flatColor = ctx.pal.flat
+                            val changeColor = when {
+                                change > 0 -> upColor
+                                change < 0 -> downColor
+                                else -> flatColor
+                            }
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    marginLeft(16f)
+                                    marginRight(16f)
+                                    marginTop(2f)
+                                    marginBottom(6f)
+                                    paddingLeft(10f)
+                                    paddingRight(10f)
+                                    paddingTop(6f)
+                                    paddingBottom(6f)
+                                    borderRadius(6f)
+                                    backgroundColor(ctx.pal.accentChipBg)
+                                }
+                                Text {
+                                    attr {
+                                        text(ctx.formatMinuteTime(mp.time))
+                                        fontSize(12f)
+                                        color(ctx.pal.textMain)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text("  ${StockFormat.price(mp.price)}  ")
+                                        fontSize(13f)
+                                        color(changeColor)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text(
+                                            "${if (change > 0) "+" else ""}${StockFormat.change(change)}  " +
+                                                    "${StockFormat.percent(pct)}"
+                                        )
+                                        fontSize(12f)
+                                        color(changeColor)
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("")
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text("量 ${StockFormat.volume(mp.volume)}")
+                                        fontSize(11f)
+                                        color(ctx.pal.textSub)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     LineChart {
                         attr {
                             width(width)
@@ -589,6 +664,11 @@ internal class StockDetailPage : BasePager() {
                             lineWidth = 1.8f
                             showDots = false
                             fillArea = true
+                        }
+                        event {
+                            onDataPointClick = { _, idx, _ ->
+                                ctx.selectMinute(idx)
+                            }
                         }
                     }
                 }
@@ -1266,6 +1346,12 @@ internal class StockDetailPage : BasePager() {
         setTimeout(0) { selectedKlineIndex = idx }
     }
 
+    /** 点选某个分时点（强制 vif 重建，使价格气泡实时刷新） */
+    private fun selectMinute(idx: Int) {
+        selectedMinuteIndex = -1
+        setTimeout(0) { selectedMinuteIndex = idx }
+    }
+
     /** 进入 AI 问答页（该股专属会话，自动发问） */
     private fun openAiChat() {
         val pageData = JSONObject().apply {
@@ -1423,5 +1509,14 @@ internal class StockDetailPage : BasePager() {
         }
         val pad = (maxV - minV) * 0.06f
         return Pair((minV - pad).toFloat(), (maxV + pad).toFloat())
+    }
+
+    /** 分时点时间格式：HHmm → HH:mm（HHmm/HHmmss 兼容） */
+    private fun formatMinuteTime(time: String): String {
+        return when (time.length) {
+            4 -> "${time.substring(0, 2)}:${time.substring(2, 4)}"
+            6 -> "${time.substring(0, 2)}:${time.substring(2, 4)}"
+            else -> time
+        }
     }
 }
