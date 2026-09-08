@@ -115,7 +115,11 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     /** 同步 activeMsgs（每次会话/消息变化后调用） */
     private fun syncActiveMsgs() {
         activeMsgs.clear()
-        activeMsgs.addAll(activeMessages())
+        // 渲染数据源剔除 context（数据上下文）消息：它们仅随会话持久化供发送时映射 system，
+        // 若混入 vfor 渲染，context 项不会生成任何子视图，将触发框架异常（vfor 要求每项恰好生成一个子视图）
+        activeMsgs.addAll(
+            activeMessages().filter { it.role != ChatMessage.ROLE_CONTEXT }
+        )
     }
 
     override fun viewDidLoad() {
@@ -582,9 +586,20 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     }
 
     private fun messageBubble(msg: ChatMessage): ViewBuilder {
-        // 数据上下文消息（K线追问注入的行情数据）不渲染气泡与操作菜单，仅随会话持久化供发送
-        if (msg.role == ChatMessage.ROLE_CONTEXT) return {}
         val ctx = this
+        // 数据上下文消息（K线追问注入的行情数据）兜底防御：正常已被 syncActiveMsgs 过滤；
+        // 万一混入渲染数据源，渲染 0 尺寸占位以满足 vfor「每项恰生成一个子视图」的框架约束，
+        // 不可见且不抛异常（此前返回空 builder 会因子视图增量为 0 直接触发框架运行时异常闪退）
+        if (msg.role == ChatMessage.ROLE_CONTEXT) {
+            return {
+                View {
+                    attr {
+                        width(0f)
+                        height(0f)
+                    }
+                }
+            }
+        }
         return {
             View {
                 attr {
