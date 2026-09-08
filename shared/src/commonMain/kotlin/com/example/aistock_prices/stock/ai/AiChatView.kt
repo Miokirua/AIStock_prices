@@ -142,8 +142,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    /** 外部（ai_chat 独立页）初始化：切换到指定股票会话；autoSend 时自动发问 */
+    /** 外部(ai_chat 独立页)初始化:切换到指定股票会话;autoSend 时自动发问 */
     fun initForStock(code: String, name: String, autoSend: Boolean, question: String? = null) {
+        // 切换股票时先静默中断在途 AI 生成,避免新会话发问被旧 sending 卡住
+        cancelIfSending()
         val conv = ConversationStore.findOrCreateForStock(sp, code, name)
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
@@ -181,6 +183,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         barLow: Double,
         barVolume: Long
     ) {
+        // 详情页 K 线追问:先静默中断在途 AI 生成,确保本次发问不被旧 sending 卡住
+        cancelIfSending()
         val conv = ConversationStore.findOrCreateForStock(sp, code, name)
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
@@ -532,9 +536,11 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
-    /** 新建会话（先关面板，再延迟刷新列表，避免 vfor 遍历期间修改列表导致崩溃） */
+    /** 新建会话(先关面板,再延迟刷新列表,避免 vfor 遍历期间修改列表导致崩溃) */
     private fun onCreateConversation() {
-        // 未启用 AI 服务时不伪装"已新建对话"，直接引导先配置
+        // 切换/新建前先静默中断在途 AI 生成(++chatSeq),确保新会话发问不被旧 sending 卡住
+        cancelIfSending()
+        // 未启用 AI 服务时不伪装"已新建对话",直接引导先配置
         if (!isConfigured()) {
             bridgeToast("请先配置 AI 服务")
             return
@@ -547,8 +553,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         setTimeout(pagerId, 50) { reloadConversations() }
     }
 
-    /** 切换会话（同样先关面板再刷新） */
+    /** 切换会话(同样先关面板再刷新) */
     private fun onSelectConversation(conv: Conversation) {
+        // 切换前先静默中断在途 AI 生成,避免新会话发问被旧 sending 卡住
+        cancelIfSending()
         activeId = conv.id
         sp.setItem(KEY_ACTIVE_ID, conv.id)
         showConvPanel = false

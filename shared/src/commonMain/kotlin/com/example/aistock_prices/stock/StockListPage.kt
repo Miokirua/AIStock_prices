@@ -976,12 +976,11 @@ internal class StockListPage : BasePager() {
                             }
                         }
                     }
-                    // 中：最新价
+                    // 右：价格 + 涨跌色块（合并为右对齐组,组内间距 8f,与左侧名称 flex 段形成左右对称）
                     View {
                         attr {
-                            width(110f)
-                            alignItemsFlexEnd()
-                            justifyContentCenter()
+                            flexDirectionRow()
+                            alignItemsCenter()
                         }
                         Text {
                             attr {
@@ -992,14 +991,14 @@ internal class StockListPage : BasePager() {
                                 textAlignRight()
                             }
                         }
-                    }
-                    // 右：涨跌徽标
-                    View {
-                        attr {
-                            width(92f)
-                            alignItemsFlexEnd()
-                            justifyContentCenter()
+                        // 间距
+                        View {
+                            attr {
+                                width(8f)
+                                height(1f)
+                            }
                         }
+                        // 涨跌徽标
                         View {
                             attr {
                                 paddingTop(4f)
