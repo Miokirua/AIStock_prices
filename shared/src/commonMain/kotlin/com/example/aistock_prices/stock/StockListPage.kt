@@ -976,37 +976,47 @@ internal class StockListPage : BasePager() {
                             }
                         }
                     }
-                    // 右：价格 + 涨跌色块（合并为右对齐组,组内间距 8f,与左侧名称 flex 段形成左右对称）
+                    // 右：价格 + 涨跌徽标（严格双列对齐：价格右对齐到 80f 列线，色块统一 110f 宽，
+                    //  间距 10f 占位；价格与色块垂直居中，所有行严格对齐列线不再随文本长度漂移）
                     View {
                         attr {
                             flexDirectionRow()
                             alignItemsCenter()
                         }
-                        Text {
-                            attr {
-                                text(StockFormat.price(quote.price))
-                                fontSize(17f)
-                                fontWeightBold()
-                                color(trendColor)
-                                textAlignRight()
-                            }
-                        }
-                        // 间距
+                        // 价格列（固定宽 80f，文本右对齐保证列右沿一致）
                         View {
                             attr {
-                                width(8f)
+                                width(80f)
+                                alignItemsFlexEnd()
+                                justifyContentCenter()
+                            }
+                            Text {
+                                attr {
+                                    text(StockFormat.price(quote.price))
+                                    fontSize(17f)
+                                    fontWeightBold()
+                                    color(trendColor)
+                                    textAlignRight()
+                                }
+                            }
+                        }
+                        // 固定间距列
+                        View {
+                            attr {
+                                width(10f)
                                 height(1f)
                             }
                         }
-                        // 涨跌徽标
+                        // 涨跌徽标（固定宽 110f，所有行严格同宽）
                         View {
                             attr {
+                                width(110f)
                                 paddingTop(4f)
                                 paddingBottom(4f)
-                                paddingLeft(8f)
-                                paddingRight(8f)
                                 borderRadius(4f)
                                 backgroundColor(trendColor)
+                                alignItemsCenter()
+                                justifyContentCenter()
                             }
                             Text {
                                 attr {
