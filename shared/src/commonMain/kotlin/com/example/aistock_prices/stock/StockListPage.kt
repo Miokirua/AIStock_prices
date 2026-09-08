@@ -19,8 +19,10 @@ import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.event.TouchParams
 import com.tencent.kuikly.core.base.ViewRef
+import com.tencent.kuikly.core.layout.Frame
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
@@ -32,6 +34,7 @@ import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.timer.clearTimeout
 import com.tencent.kuikly.core.views.ActivityIndicator
+import com.tencent.kuikly.core.views.DivView
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.Modal
@@ -69,6 +72,30 @@ internal class StockListPage : BasePager() {
     /** AI 问答 Tab 的内联视图引用（设置页返回时刷新配置态） */
     private var chatView: AiChatView? = null
 
+    // ==================== 首启引导 ====================
+    /** 引导根容器引用（convertFrame 换算基准，body 根） */
+    private var guideRootRef: ViewContainer<*, *>? = null
+    /** 首启询问弹窗：是否开始功能引导 */
+    private var showGuidePrompt by observable(false)
+    /** 引导步骤：0=不显示，1..8=第几步 */
+    private var guideStep by observable(0)
+    /** 当前高亮孔矩形（相对引导根容器坐标系） */
+    private var guideRect by observable(Frame(0f, 0f, 0f, 0f))
+    /** 当前步骤标题 / 描述文案 */
+    private var guideTitle by observable("")
+    private var guideDesc by observable("")
+    /** 首启询问是否已检查过（避免 pageDidAppear 重复弹出） */
+    private var guidePromptChecked = false
+    /** 各引导目标元素引用 */
+    private var tabSelfRef: ViewRef<DivView>? = null
+    private var tabAiRef: ViewRef<DivView>? = null
+    private var refreshBtnRef: ViewRef<DivView>? = null
+    private var menuBtnRef: ViewRef<DivView>? = null
+    private var menuAddRef: ViewRef<DivView>? = null
+    private var menuThemeRef: ViewRef<DivView>? = null
+    private var menuAiRef: ViewRef<DivView>? = null
+    private var menuGuideRef: ViewRef<DivView>? = null
+
     /** 左滑操作条宽度（置顶 72f + 删除 72f） */
     private val actionWidth = 144f
     /** 手势方向判定阈值（dp），超过才认定是水平/垂直手势 */
@@ -102,6 +129,7 @@ internal class StockListPage : BasePager() {
     override fun body(): ViewBuilder {
         val ctx = this
         return {
+            ctx.guideRootRef = this
             attr {
                 flex(1f)
                 backgroundColor(ctx.pal.bgPage)
@@ -127,12 +155,21 @@ internal class StockListPage : BasePager() {
                     }
                 }
                 vif({ ctx.currentTab == 0 }) {
-                    Text {
+                    View {
+                        ref { ctx.refreshBtnRef = it }
                         attr {
-                            text("刷新")
-                            fontSize(14f)
-                            color(ctx.pal.accent)
-                            marginRight(16f)
+                            paddingLeft(6f)
+                            paddingRight(6f)
+                            paddingTop(4f)
+                            paddingBottom(4f)
+                            marginRight(10f)
+                        }
+                        Text {
+                            attr {
+                                text("刷新")
+                                fontSize(14f)
+                                color(ctx.pal.accent)
+                            }
                         }
                         event {
                             click { ctx.onRefreshTap() }
@@ -142,6 +179,7 @@ internal class StockListPage : BasePager() {
                 // 三条横杠：下拉菜单（添加自选 / AI 设置）
                 // 注：Text 不支持 padding，包一层 View 容器承载点击区域
                 View {
+                    ref { ctx.menuBtnRef = it }
                     attr {
                         paddingTop(6f)
                         paddingBottom(6f)
@@ -190,6 +228,7 @@ internal class StockListPage : BasePager() {
                         }
                         // 添加自选
                         View {
+                            ref { ctx.menuAddRef = it }
                             attr {
                                 padding(14f)
                                 paddingLeft(16f)
@@ -219,37 +258,9 @@ internal class StockListPage : BasePager() {
                                 backgroundColor(ctx.pal.chip2Bg)
                             }
                         }
-                        // AI 设置
-                        View {
-                            attr {
-                                padding(14f)
-                                paddingLeft(16f)
-                                paddingRight(16f)
-                            }
-                            Text {
-                                attr {
-                                    text("⚙ AI 设置")
-                                    fontSize(15f)
-                                    color(ctx.pal.textMain)
-                                }
-                            }
-                            event {
-                                click {
-                                    ctx.showMenu = false
-                                    ctx.openAiConfig()
-                                }
-                            }
-                        }
-                        View {
-                            attr {
-                                height(1f)
-                                marginLeft(16f)
-                                marginRight(16f)
-                                backgroundColor(ctx.pal.chip2Bg)
-                            }
-                        }
                         // 夜间模式（三态循环：跟随系统 -> 深色 -> 浅色 -> 跟随系统）
                         View {
+                            ref { ctx.menuThemeRef = it }
                             attr {
                                 padding(14f)
                                 paddingLeft(16f)
@@ -283,6 +294,66 @@ internal class StockListPage : BasePager() {
                             }
                             event {
                                 click { ctx.cycleThemeMode() }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(1f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                backgroundColor(ctx.pal.chip2Bg)
+                            }
+                        }
+                        // AI 设置
+                        View {
+                            ref { ctx.menuAiRef = it }
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                            }
+                            Text {
+                                attr {
+                                    text("⚙ AI 设置")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            event {
+                                click {
+                                    ctx.showMenu = false
+                                    ctx.openAiConfig()
+                                }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(1f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                backgroundColor(ctx.pal.chip2Bg)
+                            }
+                        }
+                        // 功能说明：重新观看引导
+                        View {
+                            ref { ctx.menuGuideRef = it }
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                            }
+                            Text {
+                                attr {
+                                    text("❓ 功能说明")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            event {
+                                click {
+                                    ctx.showMenu = false
+                                    ctx.replayGuide()
+                                }
                             }
                         }
                     }
@@ -323,8 +394,8 @@ internal class StockListPage : BasePager() {
                         flexDirectionRow()
                         height(54f)
                     }
-                    ctx.tabItem("自选股", 0).invoke(this)
-                    ctx.tabItem("AI 问答", 1).invoke(this)
+                    ctx.tabItem("自选股", 0) { ctx.tabSelfRef = it }.invoke(this)
+                    ctx.tabItem("AI 问答", 1) { ctx.tabAiRef = it }.invoke(this)
                 }
             }
 
@@ -533,6 +604,167 @@ internal class StockListPage : BasePager() {
                     }
                 }
             }
+
+            // ---------- 首启引导：询问弹窗 ----------
+            vif({ ctx.showGuidePrompt }) {
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        zIndex(160)
+                        allCenter()
+                        backgroundColor(ctx.pal.maskDim)
+                    }
+                    event { click { } }
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 72f)
+                            borderRadius(14f)
+                            backgroundColor(ctx.pal.card)
+                            padding(22f)
+                            flexDirectionColumn()
+                        }
+                        event { click { } }
+                        Text {
+                            attr {
+                                text("欢迎使用 AiStock")
+                                fontSize(18f)
+                                fontWeightBold()
+                                color(ctx.pal.textMain)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text("花 1 分钟了解一下主要功能吧，也可随时跳过。")
+                                fontSize(14f)
+                                color(ctx.pal.textSub)
+                                marginTop(10f)
+                                lineHeight(20f)
+                            }
+                        }
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                marginTop(22f)
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.chipBg)
+                                    marginRight(8f)
+                                }
+                                Text {
+                                    attr {
+                                        text("跳过")
+                                        fontSize(14f)
+                                        color(ctx.pal.textMain)
+                                    }
+                                }
+                                event { click { ctx.skipGuide() } }
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.accent)
+                                    marginLeft(8f)
+                                }
+                                Text {
+                                    attr {
+                                        text("开始引导")
+                                        fontSize(14f)
+                                        color(ctx.pal.onAccent)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event { click { ctx.startGuide() } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- 首启引导：步骤遮罩（四块挖孔 + 描边 + 说明卡） ----------
+            vif({ ctx.guideStep > 0 }) {
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        zIndex(150)
+                    }
+                    event {
+                        click { }
+                        touchDown { }
+                        touchMove { }
+                        touchUp { }
+                        touchCancel { }
+                    }
+                    val sw = ctx.pagerData.pageViewWidth
+                    val sh = ctx.pagerData.pageViewHeight
+                    val rx = ctx.guideRect.x.coerceAtLeast(0f)
+                    val ry = ctx.guideRect.y.coerceAtLeast(0f)
+                    val rw = ctx.guideRect.width.coerceAtLeast(0f)
+                    val rh = ctx.guideRect.height.coerceAtLeast(0f)
+                    // 上遮罩
+                    View {
+                        attr {
+                            absolutePosition(top = 0f, left = 0f)
+                            width(sw)
+                            height(ry)
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 下遮罩
+                    View {
+                        attr {
+                            absolutePosition(top = ry + rh, left = 0f)
+                            width(sw)
+                            height((sh - ry - rh).coerceAtLeast(0f))
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 左遮罩
+                    View {
+                        attr {
+                            absolutePosition(top = ry, left = 0f)
+                            width(rx)
+                            height(rh)
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 右遮罩
+                    View {
+                        attr {
+                            absolutePosition(top = ry, left = rx + rw)
+                            width((sw - rx - rw).coerceAtLeast(0f))
+                            height(rh)
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 高亮孔描边
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = (ry - 2f).coerceAtLeast(0f),
+                                left = (rx - 2f).coerceAtLeast(0f)
+                            )
+                            width(rw + 4f)
+                            height(rh + 4f)
+                            borderRadius(6f)
+                            border(Border(1.5f, BorderStyle.SOLID, ctx.pal.accent))
+                        }
+                    }
+                    // 说明卡
+                    ctx.guideCard().invoke(this)
+                }
+            }
         }
     }
 
@@ -541,6 +773,7 @@ internal class StockListPage : BasePager() {
         // 菜单展示当前主题档位（宿主注入 pageData 的 themeMode；recreate 后自动取到最新值）
         menuMode = themeMode
         loadData()
+        maybeShowGuidePrompt()
     }
 
     /**
@@ -694,10 +927,11 @@ internal class StockListPage : BasePager() {
     }
 
     /** 底部任务栏单项 */
-    private fun tabItem(label: String, index: Int): ViewBuilder {
+    private fun tabItem(label: String, index: Int, refSetter: (ViewRef<DivView>) -> Unit): ViewBuilder {
         val ctx = this
         return {
             View {
+                ref { refSetter(it) }
                 attr {
                     flex(1f)
                     allCenter()
@@ -1143,5 +1377,214 @@ internal class StockListPage : BasePager() {
     /** 打开 AI 服务设置页 */
     private fun openAiConfig() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_config", JSONObject())
+    }
+
+    // ==================== 首启引导逻辑 ====================
+
+    /** 首启检查：无 guide_seen 标记时延迟弹出询问弹窗（仅一次） */
+    private fun maybeShowGuidePrompt() {
+        if (guidePromptChecked) return
+        guidePromptChecked = true
+        if (sp.getItem(KEY_GUIDE_SEEN).isBlank()) {
+            setTimeout(400) { showGuidePrompt = true }
+        }
+    }
+
+    /** 询问弹窗「开始引导」 */
+    private fun startGuide() {
+        showGuidePrompt = false
+        gotoGuideStep(1)
+    }
+
+    /** 菜单「功能说明」重看：先复位回自选股 Tab 再进入步骤 1 */
+    private fun replayGuide() {
+        guideStep = 0
+        showGuidePrompt = false
+        showMenu = false
+        currentTab = 0
+        setTimeout(100) { gotoGuideStep(1) }
+    }
+
+    /** 进入某一步：设置文案、按需打开菜单、延迟取目标 frame 计算高亮孔 */
+    private fun gotoGuideStep(step: Int) {
+        guideStep = step
+        guideTitle = guideTitleFor(step)
+        guideDesc = guideDescFor(step)
+        // 步骤 4 需打开菜单（步骤 5-8 在菜单面板上继续高亮）
+        if (step == 4) showMenu = true
+        // 菜单项视图在 showMenu=true 后才存在，延迟取 frame
+        setTimeout(80) { applyGuideRect(step) }
+    }
+
+    /** 计算当前步骤高亮孔矩形（目标元素 frame 换算到引导根容器坐标系） */
+    private fun applyGuideRect(step: Int) {
+        val ref: ViewRef<DivView>? = when (step) {
+            1 -> tabSelfRef
+            2 -> tabAiRef
+            3 -> refreshBtnRef
+            4 -> menuBtnRef
+            5 -> menuAddRef
+            6 -> menuThemeRef
+            7 -> menuAiRef
+            8 -> menuGuideRef
+            else -> null
+        }
+        val view = ref?.view ?: return
+        val root = guideRootRef ?: return
+        val origin = view.convertFrame(Frame(0f, 0f, 0f, 0f), root)
+        guideRect = Frame(origin.x, origin.y, view.frame.width, view.frame.height)
+    }
+
+    /** 「下一步」：最后一步结束引导，否则进入下一步 */
+    private fun guideNext() {
+        if (guideStep >= 8) finishGuide() else gotoGuideStep(guideStep + 1)
+    }
+
+    /** 「跳过」（询问弹窗或任意步骤）：结束并记录已看过 */
+    private fun skipGuide() = finishGuide()
+
+    /** 结束引导：收起遮罩与菜单，写入已看过标记 */
+    private fun finishGuide() {
+        guideStep = 0
+        showGuidePrompt = false
+        showMenu = false
+        sp.setItem(KEY_GUIDE_SEEN, "1")
+    }
+
+    private fun guideTitleFor(step: Int): String = when (step) {
+        1 -> "自选股"
+        2 -> "AI 问答"
+        3 -> "刷新行情"
+        4 -> "功能菜单"
+        5 -> "添加自选股"
+        6 -> if (isNightMode()) "日间模式" else "夜间模式"
+        7 -> "AI 设置"
+        8 -> "功能说明"
+        else -> ""
+    }
+
+    private fun guideDescFor(step: Int): String = when (step) {
+        1 -> "这里展示你关注的股票：最新价、涨跌额与涨跌幅一目了然，左滑单行可置顶或删除。"
+        2 -> "切到「AI 问答」，可与 AI 多轮讨论任意股票，回复会附带实时行情卡片。"
+        3 -> "点右上角「刷新」，或直接下拉列表，即可手动拉取最新行情。"
+        4 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置与使用帮助都从这里进入。"
+        5 -> "输入股票代码即可添加自选，例如 sh600519 贵州茅台。"
+        6 -> "一键切换深色 / 浅色外观，右侧小字显示当前档位。"
+        7 -> "在此配置 AI 服务（Base URL / Key / 模型），行情分析与问答共用。"
+        8 -> "以后想重温这段引导，随时点这里即可。点「完成」结束引导。"
+        else -> ""
+    }
+
+    /** 引导说明卡（定位在目标孔下方，孔位于屏幕下半部分时改放上方） */
+    private fun guideCard(): ViewBuilder {
+        val ctx = this
+        return {
+            val putAbove = ctx.guideRect.y > ctx.pagerData.pageViewHeight * 0.5f
+            View {
+                attr {
+                    if (putAbove) {
+                        absolutePosition(
+                            left = 16f,
+                            right = 16f,
+                            bottom = (ctx.pagerData.pageViewHeight - ctx.guideRect.y + 12f)
+                                .coerceAtLeast(16f)
+                        )
+                    } else {
+                        absolutePosition(
+                            left = 16f,
+                            right = 16f,
+                            top = (ctx.guideRect.y + ctx.guideRect.height + 12f).coerceAtLeast(16f)
+                        )
+                    }
+                    zIndex(150)
+                    borderRadius(14f)
+                    backgroundColor(ctx.pal.card)
+                    padding(18f)
+                    flexDirectionColumn()
+                }
+                event { click { } }
+                // 标题 + 步骤
+                View {
+                    attr {
+                        flexDirectionRow()
+                        alignItemsCenter()
+                    }
+                    Text {
+                        attr {
+                            flex(1f)
+                            text(ctx.guideTitle)
+                            fontSize(16f)
+                            fontWeightSemiBold()
+                            color(ctx.pal.textMain)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("${ctx.guideStep}/8")
+                            fontSize(12f)
+                            color(ctx.pal.textSub)
+                        }
+                    }
+                }
+                // 描述
+                Text {
+                    attr {
+                        text(ctx.guideDesc)
+                        fontSize(13f)
+                        color(ctx.pal.textSub)
+                        marginTop(8f)
+                        lineHeight(20f)
+                    }
+                }
+                // 按钮行
+                View {
+                    attr {
+                        flexDirectionRow()
+                        alignItemsCenter()
+                        marginTop(16f)
+                    }
+                    View {
+                        attr {
+                            paddingTop(8f)
+                            paddingBottom(8f)
+                            paddingLeft(4f)
+                            paddingRight(4f)
+                        }
+                        Text {
+                            attr {
+                                text("跳过")
+                                fontSize(13f)
+                                color(ctx.pal.textSub)
+                            }
+                        }
+                        event { click { ctx.skipGuide() } }
+                    }
+                    View {
+                        attr {
+                            flex(1f)
+                            height(40f)
+                            borderRadius(20f)
+                            allCenter()
+                            backgroundColor(ctx.pal.accent)
+                            marginLeft(12f)
+                        }
+                        Text {
+                            attr {
+                                text(if (ctx.guideStep >= 8) "完成" else "下一步")
+                                fontSize(14f)
+                                color(ctx.pal.onAccent)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event { click { ctx.guideNext() } }
+                    }
+                }
+            }
+        }
+    }
+
+    private companion object {
+        /** 首启引导是否已看过（SP key；值为 "1" 表示已看过） */
+        private const val KEY_GUIDE_SEEN = "guide_intro_seen"
     }
 }

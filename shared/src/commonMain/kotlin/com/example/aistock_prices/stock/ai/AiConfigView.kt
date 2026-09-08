@@ -126,7 +126,7 @@ internal class AiConfigView : ComposeView<AiConfigViewAttr, AiConfigViewEvent>()
 
                 Text {
                     attr {
-                        text("提示：保存预设时自动校验连接，失败会标红。Key 保存在本地明文（/data/data/.../shared_prefs），仅用于原型演示，请勿用于生产环境。")
+                        text("提示：保存预设时自动校验连接，失败会标红。")
                         fontSize(12f)
                         color(ctx.pal.textSub)
                         marginTop(12f)

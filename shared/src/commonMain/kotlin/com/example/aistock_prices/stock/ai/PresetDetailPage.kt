@@ -283,7 +283,7 @@ internal class PresetDetailPage : BasePager() {
 
                     Text {
                         attr {
-                            text("提示：保存时自动校验连接，失败会在预设列表中标红。Key 保存在本地明文（shared_prefs），仅用于原型演示。")
+                            text("提示：保存时自动校验连接，失败会在预设列表中标红。")
                             fontSize(12f)
                             color(ctx.pal.textSub)
                             marginTop(12f)
