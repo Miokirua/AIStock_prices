@@ -1406,24 +1406,27 @@ internal class StockListPage : BasePager() {
     }
 
     /**
-     * 进入某一步：设置文案、按需打开菜单、延迟取目标 frame 计算高亮孔。
+     * 进入某一步：设置文案、按需打开菜单、设置高亮孔矩形。
      *
-     * 步骤 1-4（底栏 Tab / 顶栏按钮）是固定边缘位置，applyGuideRect 内部直接用 fallback；
-     * 步骤 5-8 是菜单项，菜单面板在 showMenu=true 后的 layout 完成通常比一般步骤慢（约需 300-500ms），
-     * 500ms 多打一帧以保证首次进入也能落到菜单项上
+     * v1.9.19：所有 8 步统一用 guideFallbackRect，不再走 convertFrame。
+     * 实测 vfor 列表 layer 内 / 菜单面板内部 view.frame 在某些情况下会被
+     * 错算到列表中间或菜单中部，convertFrame + view.frame 补偿并不稳定。
+     * 各步骤目标都在页面固定区域（边缘位置 / 固定坐标的菜单 panel），
+     * 直接按布局规则算兜底坐标比 convertFrame 简洁可靠。
      */
     private fun gotoGuideStep(step: Int) {
         guideStep = step
         guideTitle = guideTitleFor(step)
         guideDesc = guideDescFor(step)
-        // 先给一个步骤兜底矩形，保证进入瞬间遮罩形态正常（不出现 rect 全 0 的全屏暗死）
+        // 同步给一个 fallback 矩形，立即让遮罩形态正确（避免初始 rect=(0,0,0,0) 全屏暗死）
         guideRect = guideFallbackRect(step)
         // 步骤 4 需打开菜单（步骤 5-8 在菜单面板上继续高亮）
         if (step == 4) showMenu = true
-        // 目标 ref 换算真实坐标（菜单项视图在 showMenu=true 后才存在，需延迟）；
-        // 一次 80ms 取不到就 200ms 再校准一次；步骤 5-8 加 500ms 兜底（菜单面板 layout 偏慢）
+        // 80/200ms 后再校准一次：root frame 在 layout 完成后取值可能变化
+        // （早期 frame 还未稳定；fallback 重新取一次最新 root 尺寸）
         setTimeout(80) { applyGuideRect(step) }
         setTimeout(200) { applyGuideRect(step) }
+        // 菜单面板首次打开 layout 完成偏慢（vif 触发子视图创建），再补一次兜底
         if (step in 5..8) setTimeout(500) { applyGuideRect(step) }
     }
 
@@ -1435,61 +1438,51 @@ internal class StockListPage : BasePager() {
     private fun guideScreenH(): Float =
         guideRootRef?.frame?.height?.takeIf { it > 0f } ?: pagerData.pageViewHeight
 
-    /** 各步骤目标 ref 取不到/换算失败时的兜底矩形（按页面宽高估算目标区域，保证引导不失效） */
+    /**
+     * 各步骤目标矩形，全部按页面布局规则手工计算。
+     *
+     * 步骤 1-4 是页面固定边缘位置（底栏 Tab / 顶栏按钮）：
+     * - 顶栏高度 = 56f + statusBarHeight
+     * - 底栏 Tab 高 = 54f（位于 root.frame 最底部）
+     *
+     * 步骤 5-8 是菜单面板内固定位置：
+     * - 菜单 panel absolutePosition(top=56f + statusBarHeight, left=0, right=0) 全宽，paddingTop/Bottom=6f
+     * - 每项 padding(14f) + text 15sp ≈ 60f 高，分隔线 1f
+     * - items 横向 from x=16，宽度 = w-32（面板 padding 16 偏移）
+     */
     private fun guideFallbackRect(step: Int): Frame {
         val w = guideScreenW()
         val h = guideScreenH()
         val sb = pagerData.statusBarHeight
+        val itemX = 16f
+        val itemW = (w - 32f).coerceAtLeast(0f)
+        val itemH = 60f
         return when (step) {
-            // 底部 Tab 栏位于 root.frame 最底部：步骤 1/2 覆盖左/右半 Tab 按钮
+            // 底部 Tab 栏：自选股(左半) / AI问答(右半)
             1 -> Frame(0f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
             2 -> Frame(w / 2f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
-            // 顶栏「刷新」位于右上（顶栏高 56+sb），按钮宽约 50f（文字+padding）
-            3 -> Frame((w - 66f).coerceAtLeast(0f), sb + 8f, 52f, 40f)
+            // 顶栏「刷新」靠右（顶栏 56+sb），文字 + padding ≈ 60f
+            3 -> Frame((w - 70f).coerceAtLeast(0f), sb + 10f, 60f, 36f)
             // 顶栏「☰」最右（图标 20f + padding）
-            4 -> Frame((w - 40f).coerceAtLeast(0f), sb + 8f, 32f, 40f)
-            // 菜单面板项（粗估：面板从顶栏下方弹出，靠右；逐项下移）
-            5 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f, 164f, 44f)
-            6 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 49f, 164f, 44f)
-            7 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 98f, 164f, 44f)
-            8 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 147f, 164f, 44f)
+            4 -> Frame((w - 42f).coerceAtLeast(0f), sb + 10f, 32f, 36f)
+            // 菜单面板 4 项：起点 sb + 56(顶栏) + 6(panel paddingTop) = sb + 62
+            5 -> Frame(itemX, sb + 62f, itemW, itemH)
+            // 下一项加 60(item) + 1(divider) = 61
+            6 -> Frame(itemX, sb + 62f + 61f, itemW, itemH)
+            7 -> Frame(itemX, sb + 62f + 122f, itemW, itemH)
+            8 -> Frame(itemX, sb + 62f + 183f, itemW, itemH)
             else -> Frame(16f, sb + 80f, w - 32f, 120f)
         }
     }
 
     /**
-     * 计算当前步骤高亮孔矩形（目标元素 frame 换算到引导根容器坐标系）。
+     * 计算当前步骤高亮孔矩形。
      *
-     * 步骤 1-4 是固定边缘位置（底栏 Tab / 顶栏按钮），convertFrame 取到的值偶尔会落到 list
-     * 中间某行（实测 tabSelfRef.view.frame 在 vfor 列表 layer 里被错算），直接用 fallback
-     * 兜底矩形更稳定；步骤 5-8 是菜单面板的项，依赖实际 layout，需走 convertFrame 并叠加
-     * view.frame 补偿；越界/异常时保留兜底矩形，保证引导始终可见可操作。
+     * v1.9.19 一律走 guideFallbackRect，不再依赖 convertFrame（实测在 vfor 列表 layer
+     * 与菜单 panel 内部 view.frame 会被错算到中间区域，反而不如布局规则的稳定）。
      */
     private fun applyGuideRect(step: Int) {
-        if (step in 1..4) {
-            // 边缘固定位置：跳过 convertFrame，直接给兜底矩形
-            guideRect = guideFallbackRect(step)
-            return
-        }
-        val ref: ViewRef<DivView>? = when (step) {
-            5 -> menuAddRef
-            6 -> menuThemeRef
-            7 -> menuAiRef
-            8 -> menuGuideRef
-            else -> null
-        }
-        val view = ref?.view ?: return
-        val root = guideRootRef ?: return
-        val vf = view.frame
-        if (vf.width <= 0f || vf.height <= 0f) return // 视图尚未布局完成，保留兜底矩形
-        val origin = view.convertFrame(Frame(0f, 0f, 0f, 0f), root)
-        val x = origin.x + vf.x
-        val y = origin.y + vf.y
-        val w = guideScreenW()
-        val h = guideScreenH()
-        // 越界/异常坐标不采纳（保留兜底矩形），避免挖孔错乱
-        if (x.isNaN() || y.isNaN() || x < -2f || y < -2f || x + vf.width > w + 2f || y + vf.height > h + 2f) return
-        guideRect = Frame(x, y, vf.width, vf.height)
+        guideRect = guideFallbackRect(step)
     }
 
     /** 「下一步」：最后一步结束引导，否则进入下一步 */
@@ -1537,10 +1530,10 @@ internal class StockListPage : BasePager() {
         val ctx = this
         return {
             // 说明卡紧跟高亮孔：孔下方放得下就放孔下方，否则放孔上方。
-            // 用根容器实际尺寸做基准（pageViewHeight 可能含状态栏导致基准偏移），
-            // 卡片高度精简，避免大卡片固定遮挡上半屏内容。
+            // 用根容器实际尺寸做基准（pageViewHeight 可能含状态栏导致基准偏移）。
+            // 卡片高度需要容纳 title(16sp) + desc(13sp×2) + button 40f + padding(18×2) ≈ 180f
             val cardW = ctx.guideScreenW() - 32f
-            val cardH = 132f
+            val cardH = 180f
             val screenH = ctx.guideScreenH()
             val rectY = ctx.guideRect.y.coerceAtLeast(0f)
             val rectH = ctx.guideRect.height.coerceAtLeast(0f)
