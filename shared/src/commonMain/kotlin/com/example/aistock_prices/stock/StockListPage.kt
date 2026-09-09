@@ -1405,7 +1405,13 @@ internal class StockListPage : BasePager() {
         setTimeout(100) { gotoGuideStep(1) }
     }
 
-    /** 进入某一步：设置文案、按需打开菜单、延迟取目标 frame 计算高亮孔 */
+    /**
+     * 进入某一步：设置文案、按需打开菜单、延迟取目标 frame 计算高亮孔。
+     *
+     * 步骤 1-4（底栏 Tab / 顶栏按钮）是固定边缘位置，applyGuideRect 内部直接用 fallback；
+     * 步骤 5-8 是菜单项，菜单面板在 showMenu=true 后的 layout 完成通常比一般步骤慢（约需 300-500ms），
+     * 500ms 多打一帧以保证首次进入也能落到菜单项上
+     */
     private fun gotoGuideStep(step: Int) {
         guideStep = step
         guideTitle = guideTitleFor(step)
@@ -1415,9 +1421,10 @@ internal class StockListPage : BasePager() {
         // 步骤 4 需打开菜单（步骤 5-8 在菜单面板上继续高亮）
         if (step == 4) showMenu = true
         // 目标 ref 换算真实坐标（菜单项视图在 showMenu=true 后才存在，需延迟）；
-        // 一次 80ms 取不到就 200ms 再校准一次
+        // 一次 80ms 取不到就 200ms 再校准一次；步骤 5-8 加 500ms 兜底（菜单面板 layout 偏慢）
         setTimeout(80) { applyGuideRect(step) }
         setTimeout(200) { applyGuideRect(step) }
+        if (step in 5..8) setTimeout(500) { applyGuideRect(step) }
     }
 
     /** 引导根容器有效宽度（布局完成前 fallback 到 pageView 尺寸） */
@@ -1434,13 +1441,13 @@ internal class StockListPage : BasePager() {
         val h = guideScreenH()
         val sb = pagerData.statusBarHeight
         return when (step) {
-            // 底部 Tab 栏：自选股(左半)/AI问答(右半)，tab 高 54 + 栏底部 padding
-            1 -> Frame(0f, (h - 70f).coerceAtLeast(0f), w / 2f, 54f)
-            2 -> Frame(w / 2f, (h - 70f).coerceAtLeast(0f), w / 2f, 54f)
-            // 顶栏「刷新」（顶栏高 56+状态栏，靠右）
-            3 -> Frame((w - 84f).coerceAtLeast(0f), sb + 10f, 68f, 36f)
-            // 顶栏「☰」最右
-            4 -> Frame((w - 56f).coerceAtLeast(0f), sb + 10f, 44f, 36f)
+            // 底部 Tab 栏位于 root.frame 最底部：步骤 1/2 覆盖左/右半 Tab 按钮
+            1 -> Frame(0f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
+            2 -> Frame(w / 2f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
+            // 顶栏「刷新」位于右上（顶栏高 56+sb），按钮宽约 50f（文字+padding）
+            3 -> Frame((w - 66f).coerceAtLeast(0f), sb + 8f, 52f, 40f)
+            // 顶栏「☰」最右（图标 20f + padding）
+            4 -> Frame((w - 40f).coerceAtLeast(0f), sb + 8f, 32f, 40f)
             // 菜单面板项（粗估：面板从顶栏下方弹出，靠右；逐项下移）
             5 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f, 164f, 44f)
             6 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 49f, 164f, 44f)
@@ -1452,16 +1459,19 @@ internal class StockListPage : BasePager() {
 
     /**
      * 计算当前步骤高亮孔矩形（目标元素 frame 换算到引导根容器坐标系）。
-     * convertFrame 实现仅累加父链偏移（不含视图自身 layoutFrame），
-     * 故结果需再叠加 view.frame 的 x/y。失败（ref/root 未就绪或矩形越界）
-     * 时保留兜底矩形，保证引导始终可见可操作。
+     *
+     * 步骤 1-4 是固定边缘位置（底栏 Tab / 顶栏按钮），convertFrame 取到的值偶尔会落到 list
+     * 中间某行（实测 tabSelfRef.view.frame 在 vfor 列表 layer 里被错算），直接用 fallback
+     * 兜底矩形更稳定；步骤 5-8 是菜单面板的项，依赖实际 layout，需走 convertFrame 并叠加
+     * view.frame 补偿；越界/异常时保留兜底矩形，保证引导始终可见可操作。
      */
     private fun applyGuideRect(step: Int) {
+        if (step in 1..4) {
+            // 边缘固定位置：跳过 convertFrame，直接给兜底矩形
+            guideRect = guideFallbackRect(step)
+            return
+        }
         val ref: ViewRef<DivView>? = when (step) {
-            1 -> tabSelfRef
-            2 -> tabAiRef
-            3 -> refreshBtnRef
-            4 -> menuBtnRef
             5 -> menuAddRef
             6 -> menuThemeRef
             7 -> menuAiRef
