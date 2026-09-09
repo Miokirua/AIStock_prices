@@ -702,8 +702,8 @@ internal class StockListPage : BasePager() {
                         touchUp { }
                         touchCancel { }
                     }
-                    val sw = ctx.pagerData.pageViewWidth
-                    val sh = ctx.pagerData.pageViewHeight
+                    val sw = ctx.guideScreenW()
+                    val sh = ctx.guideScreenH()
                     val rx = ctx.guideRect.x.coerceAtLeast(0f)
                     val ry = ctx.guideRect.y.coerceAtLeast(0f)
                     val rw = ctx.guideRect.width.coerceAtLeast(0f)
@@ -1420,10 +1420,18 @@ internal class StockListPage : BasePager() {
         setTimeout(200) { applyGuideRect(step) }
     }
 
+    /** 引导根容器有效宽度（布局完成前 fallback 到 pageView 尺寸） */
+    private fun guideScreenW(): Float =
+        guideRootRef?.frame?.width?.takeIf { it > 0f } ?: pagerData.pageViewWidth
+
+    /** 引导根容器有效高度（布局完成前 fallback 到 pageView 尺寸） */
+    private fun guideScreenH(): Float =
+        guideRootRef?.frame?.height?.takeIf { it > 0f } ?: pagerData.pageViewHeight
+
     /** 各步骤目标 ref 取不到/换算失败时的兜底矩形（按页面宽高估算目标区域，保证引导不失效） */
     private fun guideFallbackRect(step: Int): Frame {
-        val w = pagerData.pageViewWidth
-        val h = pagerData.pageViewHeight
+        val w = guideScreenW()
+        val h = guideScreenH()
         val sb = pagerData.statusBarHeight
         return when (step) {
             // 底部 Tab 栏：自选股(左半)/AI问答(右半)，tab 高 54 + 栏底部 padding
@@ -1467,8 +1475,8 @@ internal class StockListPage : BasePager() {
         val origin = view.convertFrame(Frame(0f, 0f, 0f, 0f), root)
         val x = origin.x + vf.x
         val y = origin.y + vf.y
-        val w = pagerData.pageViewWidth
-        val h = pagerData.pageViewHeight
+        val w = guideScreenW()
+        val h = guideScreenH()
         // 越界/异常坐标不采纳（保留兜底矩形），避免挖孔错乱
         if (x.isNaN() || y.isNaN() || x < -2f || y < -2f || x + vf.width > w + 2f || y + vf.height > h + 2f) return
         guideRect = Frame(x, y, vf.width, vf.height)
@@ -1518,21 +1526,24 @@ internal class StockListPage : BasePager() {
     private fun guideCard(): ViewBuilder {
         val ctx = this
         return {
-            // 孔位在屏下半部 → 卡放孔上方；否则放孔下方。
-            // 说明卡始终用「显式宽高 + top/left 锚定」确定性定位：
-            // 即使 guideRect 尚未就绪(全0)卡也会显示在屏幕顶部，不会出现全屏暗死/卡片不可见。
-            val cardW = ctx.pagerData.pageViewWidth - 32f
-            val cardH = 204f
-            val putAbove = ctx.guideRect.y > ctx.pagerData.pageViewHeight * 0.5f
-            val cardTop = if (putAbove) {
-                ctx.guideRect.y - cardH - 12f
+            // 说明卡紧跟高亮孔：孔下方放得下就放孔下方，否则放孔上方。
+            // 用根容器实际尺寸做基准（pageViewHeight 可能含状态栏导致基准偏移），
+            // 卡片高度精简，避免大卡片固定遮挡上半屏内容。
+            val cardW = ctx.guideScreenW() - 32f
+            val cardH = 132f
+            val screenH = ctx.guideScreenH()
+            val rectY = ctx.guideRect.y.coerceAtLeast(0f)
+            val rectH = ctx.guideRect.height.coerceAtLeast(0f)
+            val below = rectY + rectH + cardH + 12f <= screenH
+            val cardTop = if (below) {
+                rectY + rectH + 12f
             } else {
-                ctx.guideRect.y + ctx.guideRect.height + 12f
+                (rectY - cardH - 12f).coerceAtLeast(8f)
             }
             View {
                 attr {
                     absolutePosition(
-                        top = cardTop.coerceIn(8f, (ctx.pagerData.pageViewHeight - cardH - 8f).coerceAtLeast(8f)),
+                        top = cardTop,
                         left = 16f
                     )
                     width(cardW)
