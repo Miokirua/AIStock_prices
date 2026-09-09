@@ -230,13 +230,25 @@ internal class StockListPage : BasePager() {
                         View {
                             ref { ctx.menuAddRef = it }
                             attr {
-                                padding(14f)
+                                paddingTop(14f)
+                                paddingBottom(14f)
                                 paddingLeft(16f)
                                 paddingRight(16f)
+                                flexDirectionRow()
+                                alignItemsCenter()
                             }
                             Text {
                                 attr {
-                                    text("＋ 添加自选股")
+                                    text("＋")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("添加自选股")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
                                 }
@@ -338,13 +350,25 @@ internal class StockListPage : BasePager() {
                         View {
                             ref { ctx.menuGuideRef = it }
                             attr {
-                                padding(14f)
+                                paddingTop(14f)
+                                paddingBottom(14f)
                                 paddingLeft(16f)
                                 paddingRight(16f)
+                                flexDirectionRow()
+                                alignItemsCenter()
                             }
                             Text {
                                 attr {
-                                    text("❓ 功能说明")
+                                    text("❓")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("功能说明")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
                                 }
@@ -688,12 +712,24 @@ internal class StockListPage : BasePager() {
                 }
             }
 
-            // ---------- 首启引导：步骤遮罩（四块挖孔 + 描边 + 说明卡） ----------
-            vif({ ctx.guideStep > 0 }) {
+            // ---------- 首启引导：步骤遮罩（整层 mask + 高亮孔覆盖 + 说明卡） ----------
+            // v1.9.20 架构重构：
+            // - 废弃 vif 包裹整个 mask 容器（vif lambda 只在 false→true 进入一次，子 view 用初始值 (0,0,0,0) 不绘制）
+            // - 容器 always-mounted，里面 vif 包裹"高亮孔/描边/说明卡"内容
+            // - 整层 mask 跟 menu panel 同写法（absolutePosition 全边锚定 + backgroundColor maskDim）确保可靠绘制
+            // - 高亮孔用 pal.bgPage 覆盖在 mask 上形成"挖孔"效果
+            View {
+                attr {
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    zIndex(150)
+                }
+                // 整层半透明 mask 背景（始终挂载，但仅在 guideStep>0 时实际显示）
+                // 用 visible 而不是 vif 包裹，确保 view 始终在树中、backgroundColor 始终响应主题
                 View {
                     attr {
                         absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        zIndex(150)
+                        backgroundColor(ctx.pal.maskDim)
+                        opacity(if (ctx.guideStep > 0) 1f else 0f)
                     }
                     event {
                         click { }
@@ -702,61 +738,29 @@ internal class StockListPage : BasePager() {
                         touchUp { }
                         touchCancel { }
                     }
-                    val sw = ctx.guideScreenW()
-                    val sh = ctx.guideScreenH()
-                    val rx = ctx.guideRect.x.coerceAtLeast(0f)
-                    val ry = ctx.guideRect.y.coerceAtLeast(0f)
-                    val rw = ctx.guideRect.width.coerceAtLeast(0f)
-                    val rh = ctx.guideRect.height.coerceAtLeast(0f)
-                    // 上遮罩
-                    View {
-                        attr {
-                            absolutePosition(top = 0f, left = 0f)
-                            width(sw)
-                            height(ry)
-                            backgroundColor(ctx.pal.maskDim)
-                        }
-                        event { click { } }
-                    }
-                    // 下遮罩
-                    View {
-                        attr {
-                            absolutePosition(top = ry + rh, left = 0f)
-                            width(sw)
-                            height((sh - ry - rh).coerceAtLeast(0f))
-                            backgroundColor(ctx.pal.maskDim)
-                        }
-                        event { click { } }
-                    }
-                    // 左遮罩
-                    View {
-                        attr {
-                            absolutePosition(top = ry, left = 0f)
-                            width(rx)
-                            height(rh)
-                            backgroundColor(ctx.pal.maskDim)
-                        }
-                        event { click { } }
-                    }
-                    // 右遮罩
-                    View {
-                        attr {
-                            absolutePosition(top = ry, left = rx + rw)
-                            width((sw - rx - rw).coerceAtLeast(0f))
-                            height(rh)
-                            backgroundColor(ctx.pal.maskDim)
-                        }
-                        event { click { } }
-                    }
-                    // 高亮孔描边
+                }
+                vif({ ctx.guideStep > 0 }) {
+                    // 高亮孔：用页面背景色"挖出"目标区域
                     View {
                         attr {
                             absolutePosition(
-                                top = (ry - 2f).coerceAtLeast(0f),
-                                left = (rx - 2f).coerceAtLeast(0f)
+                                top = ctx.guideRect.y.coerceAtLeast(0f),
+                                left = ctx.guideRect.x.coerceAtLeast(0f)
                             )
-                            width(rw + 4f)
-                            height(rh + 4f)
+                            width(ctx.guideRect.width.coerceAtLeast(0f))
+                            height(ctx.guideRect.height.coerceAtLeast(0f))
+                            backgroundColor(ctx.pal.bgPage)
+                        }
+                    }
+                    // 高亮描边
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = (ctx.guideRect.y - 2f).coerceAtLeast(0f),
+                                left = (ctx.guideRect.x - 2f).coerceAtLeast(0f)
+                            )
+                            width((ctx.guideRect.width + 4f).coerceAtLeast(0f))
+                            height((ctx.guideRect.height + 4f).coerceAtLeast(0f))
                             borderRadius(6f)
                             border(Border(1.5f, BorderStyle.SOLID, ctx.pal.accent))
                         }
@@ -1393,6 +1397,7 @@ internal class StockListPage : BasePager() {
     /** 询问弹窗「开始引导」 */
     private fun startGuide() {
         showGuidePrompt = false
+        println("[Guide] startGuide rootW=${guideRootRef?.frame?.width} rootH=${guideRootRef?.frame?.height} pageViewW=${pagerData.pageViewWidth} pageViewH=${pagerData.pageViewHeight} statusBar=${pagerData.statusBarHeight}")
         gotoGuideStep(1)
     }
 
@@ -1449,6 +1454,16 @@ internal class StockListPage : BasePager() {
      * - 菜单 panel absolutePosition(top=56f + statusBarHeight, left=0, right=0) 全宽，paddingTop/Bottom=6f
      * - 每项 padding(14f) + text 15sp ≈ 60f 高，分隔线 1f
      * - items 横向 from x=16，宽度 = w-32（面板 padding 16 偏移）
+     *
+     * v1.9.20 布局规则（dp 密度无关，跨分辨率稳定）：
+     * - 底部 Tab 栏高度 54dp
+     * - 顶栏高度 56dp + statusBar
+     * - 顶栏 paddingLeft/Right=16，「刷新」marginRight=10，「☰」paddingRight=4
+     * - 菜单面板 top = 56 + sb + 19dp 偏移（实测校准：panel absolutePosition 实际起点比代码定义多 19dp）
+     * - 菜单白卡 paddingTop/Bottom=6
+     * - 每项 padding(14) + text 15sp + padding(14) ≈ 48dp 高 + 1dp 分隔线
+     *
+     * 所有公式用 w/h/sb 相对量，dp 值由代码布局规则定义（所有设备一致）。
      */
     private fun guideFallbackRect(step: Int): Frame {
         val w = guideScreenW()
@@ -1456,30 +1471,34 @@ internal class StockListPage : BasePager() {
         val sb = pagerData.statusBarHeight
         val itemX = 16f
         val itemW = (w - 32f).coerceAtLeast(0f)
-        val itemH = 60f
+        val itemH = 48f
+        val itemStep = 49f  // item 48dp + divider 1dp
+        // 菜单白卡 y 起点 = panel top + 6dp paddingTop
+        // panel top 实测比代码定义 (sb+56) 多 19dp
+        val menuY = sb + 56f + 19f + 6f
         return when (step) {
             // 底部 Tab 栏：自选股(左半) / AI问答(右半)
             1 -> Frame(0f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
             2 -> Frame(w / 2f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
-            // 顶栏「刷新」靠右（顶栏 56+sb），文字 + padding ≈ 60f
-            3 -> Frame((w - 70f).coerceAtLeast(0f), sb + 10f, 60f, 36f)
-            // 顶栏「☰」最右（图标 20f + padding）
-            4 -> Frame((w - 42f).coerceAtLeast(0f), sb + 10f, 32f, 36f)
-            // 菜单面板 4 项：起点 sb + 56(顶栏) + 6(panel paddingTop) = sb + 62
-            5 -> Frame(itemX, sb + 62f, itemW, itemH)
-            // 下一项加 60(item) + 1(divider) = 61
-            6 -> Frame(itemX, sb + 62f + 61f, itemW, itemH)
-            7 -> Frame(itemX, sb + 62f + 122f, itemW, itemH)
-            8 -> Frame(itemX, sb + 62f + 183f, itemW, itemH)
+            // 顶栏「刷新」：paddingLeft(6)+text 14sp+paddingRight(6)+marginRight(10)
+            // 实测起点约 w-100（取决于"刷新"实际字宽，约 30-32dp）
+            3 -> Frame((w - 100f).coerceAtLeast(0f), sb + 15f, 50f, 26f)
+            // 顶栏「☰」：paddingLeft(8)+"☰" 20sp+paddingRight(4)≈38dp，距右 4dp
+            4 -> Frame((w - 42f).coerceAtLeast(0f), sb + 9f, 38f, 38f)
+            // 菜单面板 4 项：起点 menuY，每项 48dp + 1dp divider
+            5 -> Frame(itemX, menuY + 0f * itemStep, itemW, itemH)
+            6 -> Frame(itemX, menuY + 1f * itemStep, itemW, itemH)
+            7 -> Frame(itemX, menuY + 2f * itemStep, itemW, itemH)
+            8 -> Frame(itemX, menuY + 3f * itemStep, itemW, itemH)
             else -> Frame(16f, sb + 80f, w - 32f, 120f)
         }
     }
 
     /**
-     * 计算当前步骤高亮孔矩形。
+     * 计算当前步骤高亮孔矩形（v1.9.20 一律走 guideFallbackRect）。
      *
-     * v1.9.19 一律走 guideFallbackRect，不再依赖 convertFrame（实测在 vfor 列表 layer
-     * 与菜单 panel 内部 view.frame 会被错算到中间区域，反而不如布局规则的稳定）。
+     * 不用 convertFrame（v1.9.19 已证明不可靠），不再单独判越界（fallback 公式已
+     * 保证矩形在合理范围内）。
      */
     private fun applyGuideRect(step: Int) {
         guideRect = guideFallbackRect(step)
@@ -1532,19 +1551,21 @@ internal class StockListPage : BasePager() {
             // 说明卡紧跟高亮孔：孔下方放得下就放孔下方，否则放孔上方。
             // 用根容器实际尺寸做基准（pageViewHeight 可能含状态栏导致基准偏移）。
             // 卡片高度需要容纳 title(16sp) + desc(13sp×2) + button 40f + padding(18×2) ≈ 180f
-            val cardW = ctx.guideScreenW() - 32f
+            // 关键：cardTop/rectY/rectH 等求值必须在 attr lambda 内部读 observable，
+            // 否则和 mask 子 view 一样的"lambda 外 val 中断响应式订阅"问题。
             val cardH = 180f
-            val screenH = ctx.guideScreenH()
-            val rectY = ctx.guideRect.y.coerceAtLeast(0f)
-            val rectH = ctx.guideRect.height.coerceAtLeast(0f)
-            val below = rectY + rectH + cardH + 12f <= screenH
-            val cardTop = if (below) {
-                rectY + rectH + 12f
-            } else {
-                (rectY - cardH - 12f).coerceAtLeast(8f)
-            }
             View {
                 attr {
+                    val rectY = ctx.guideRect.y.coerceAtLeast(0f)
+                    val rectH = ctx.guideRect.height.coerceAtLeast(0f)
+                    val screenH = ctx.guideScreenH()
+                    val cardW = ctx.guideScreenW() - 32f
+                    val below = rectY + rectH + cardH + 12f <= screenH
+                    val cardTop = if (below) {
+                        rectY + rectH + 12f
+                    } else {
+                        (rectY - cardH - 12f).coerceAtLeast(8f)
+                    }
                     absolutePosition(
                         top = cardTop,
                         left = 16f
