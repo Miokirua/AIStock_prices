@@ -1410,13 +1410,44 @@ internal class StockListPage : BasePager() {
         guideStep = step
         guideTitle = guideTitleFor(step)
         guideDesc = guideDescFor(step)
+        // 先给一个步骤兜底矩形，保证进入瞬间遮罩形态正常（不出现 rect 全 0 的全屏暗死）
+        guideRect = guideFallbackRect(step)
         // 步骤 4 需打开菜单（步骤 5-8 在菜单面板上继续高亮）
         if (step == 4) showMenu = true
-        // 菜单项视图在 showMenu=true 后才存在，延迟取 frame
+        // 目标 ref 换算真实坐标（菜单项视图在 showMenu=true 后才存在，需延迟）；
+        // 一次 80ms 取不到就 200ms 再校准一次
         setTimeout(80) { applyGuideRect(step) }
+        setTimeout(200) { applyGuideRect(step) }
     }
 
-    /** 计算当前步骤高亮孔矩形（目标元素 frame 换算到引导根容器坐标系） */
+    /** 各步骤目标 ref 取不到/换算失败时的兜底矩形（按页面宽高估算目标区域，保证引导不失效） */
+    private fun guideFallbackRect(step: Int): Frame {
+        val w = pagerData.pageViewWidth
+        val h = pagerData.pageViewHeight
+        val sb = pagerData.statusBarHeight
+        return when (step) {
+            // 底部 Tab 栏：自选股(左半)/AI问答(右半)，tab 高 54 + 栏底部 padding
+            1 -> Frame(0f, (h - 70f).coerceAtLeast(0f), w / 2f, 54f)
+            2 -> Frame(w / 2f, (h - 70f).coerceAtLeast(0f), w / 2f, 54f)
+            // 顶栏「刷新」（顶栏高 56+状态栏，靠右）
+            3 -> Frame((w - 84f).coerceAtLeast(0f), sb + 10f, 68f, 36f)
+            // 顶栏「☰」最右
+            4 -> Frame((w - 56f).coerceAtLeast(0f), sb + 10f, 44f, 36f)
+            // 菜单面板项（粗估：面板从顶栏下方弹出，靠右；逐项下移）
+            5 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f, 164f, 44f)
+            6 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 49f, 164f, 44f)
+            7 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 98f, 164f, 44f)
+            8 -> Frame((w - 180f).coerceAtLeast(0f), sb + 56f + 66f + 147f, 164f, 44f)
+            else -> Frame(16f, sb + 80f, w - 32f, 120f)
+        }
+    }
+
+    /**
+     * 计算当前步骤高亮孔矩形（目标元素 frame 换算到引导根容器坐标系）。
+     * convertFrame 实现仅累加父链偏移（不含视图自身 layoutFrame），
+     * 故结果需再叠加 view.frame 的 x/y。失败（ref/root 未就绪或矩形越界）
+     * 时保留兜底矩形，保证引导始终可见可操作。
+     */
     private fun applyGuideRect(step: Int) {
         val ref: ViewRef<DivView>? = when (step) {
             1 -> tabSelfRef
@@ -1431,8 +1462,16 @@ internal class StockListPage : BasePager() {
         }
         val view = ref?.view ?: return
         val root = guideRootRef ?: return
+        val vf = view.frame
+        if (vf.width <= 0f || vf.height <= 0f) return // 视图尚未布局完成，保留兜底矩形
         val origin = view.convertFrame(Frame(0f, 0f, 0f, 0f), root)
-        guideRect = Frame(origin.x, origin.y, view.frame.width, view.frame.height)
+        val x = origin.x + vf.x
+        val y = origin.y + vf.y
+        val w = pagerData.pageViewWidth
+        val h = pagerData.pageViewHeight
+        // 越界/异常坐标不采纳（保留兜底矩形），避免挖孔错乱
+        if (x.isNaN() || y.isNaN() || x < -2f || y < -2f || x + vf.width > w + 2f || y + vf.height > h + 2f) return
+        guideRect = Frame(x, y, vf.width, vf.height)
     }
 
     /** 「下一步」：最后一步结束引导，否则进入下一步 */
@@ -1479,23 +1518,25 @@ internal class StockListPage : BasePager() {
     private fun guideCard(): ViewBuilder {
         val ctx = this
         return {
+            // 孔位在屏下半部 → 卡放孔上方；否则放孔下方。
+            // 说明卡始终用「显式宽高 + top/left 锚定」确定性定位：
+            // 即使 guideRect 尚未就绪(全0)卡也会显示在屏幕顶部，不会出现全屏暗死/卡片不可见。
+            val cardW = ctx.pagerData.pageViewWidth - 32f
+            val cardH = 204f
             val putAbove = ctx.guideRect.y > ctx.pagerData.pageViewHeight * 0.5f
+            val cardTop = if (putAbove) {
+                ctx.guideRect.y - cardH - 12f
+            } else {
+                ctx.guideRect.y + ctx.guideRect.height + 12f
+            }
             View {
                 attr {
-                    if (putAbove) {
-                        absolutePosition(
-                            left = 16f,
-                            right = 16f,
-                            bottom = (ctx.pagerData.pageViewHeight - ctx.guideRect.y + 12f)
-                                .coerceAtLeast(16f)
-                        )
-                    } else {
-                        absolutePosition(
-                            left = 16f,
-                            right = 16f,
-                            top = (ctx.guideRect.y + ctx.guideRect.height + 12f).coerceAtLeast(16f)
-                        )
-                    }
+                    absolutePosition(
+                        top = cardTop.coerceIn(8f, (ctx.pagerData.pageViewHeight - cardH - 8f).coerceAtLeast(8f)),
+                        left = 16f
+                    )
+                    width(cardW)
+                    height(cardH)
                     zIndex(150)
                     borderRadius(14f)
                     backgroundColor(ctx.pal.card)
