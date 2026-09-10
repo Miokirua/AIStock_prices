@@ -239,9 +239,12 @@ internal class StockListPage : BasePager() {
                             }
                             Text {
                                 attr {
+                                    // 图标列固定宽度并居中：四个菜单项的文字起始 x 保持一致
                                     text("＋")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
+                                    width(26f)
+                                    textAlignCenter()
                                     marginRight(8f)
                                 }
                             }
@@ -285,6 +288,8 @@ internal class StockListPage : BasePager() {
                                     // 图标表示"点击后将切换到的模式"：当前夜间观感 → 显示太阳（将切到日间）；日间观感 → 月亮
                                     text(if (ctx.isNightMode()) "☀️" else "🌙")
                                     fontSize(15f)
+                                    width(26f)
+                                    textAlignCenter()
                                     marginRight(8f)
                                 }
                             }
@@ -323,10 +328,23 @@ internal class StockListPage : BasePager() {
                                 padding(14f)
                                 paddingLeft(16f)
                                 paddingRight(16f)
+                                flexDirectionRow()
+                                alignItemsCenter()
                             }
                             Text {
                                 attr {
-                                    text("⚙ AI 设置")
+                                    text("⚙")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                    width(26f)
+                                    textAlignCenter()
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("AI 设置")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
                                 }
@@ -362,6 +380,8 @@ internal class StockListPage : BasePager() {
                                     text("❓")
                                     fontSize(15f)
                                     color(ctx.pal.textMain)
+                                    width(26f)
+                                    textAlignCenter()
                                     marginRight(8f)
                                 }
                             }
