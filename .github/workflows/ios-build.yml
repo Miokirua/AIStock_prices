@@ -79,12 +79,35 @@ jobs:
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
             -configuration Debug \
-            -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build 2>&1 | tail -400
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | tail -200
+
+      # 无 token 环境下无法下载 Actions 日志，故把关键错误回传为 check-run 注解（公开仓库匿名可读）
+      - name: 回传编译错误为注解
+        if: always()
+        run: |
+          LOG="$RUNNER_TEMP/xcodebuild.log"
+          if [ ! -f "$LOG" ]; then echo "未找到 xcodebuild 日志"; exit 0; fi
+          echo "日志总行数: $(wc -l < "$LOG")"
+          grep -nE "(error|fatal error|Error):" "$LOG" | grep -v "^$" | head -45 > "$RUNNER_TEMP/errs.txt" || true
+          if [ -s "$RUNNER_TEMP/errs.txt" ]; then
+            echo "=== 匹配到 $(wc -l < "$RUNNER_TEMP/errs.txt") 条错误 ==="
+            while IFS= read -r l; do
+              esc=$(printf '%s' "$l" | sed 's/%/%25/g; s/\r//g')
+              echo "::error::$esc"
+            done < "$RUNNER_TEMP/errs.txt"
+          else
+            echo "=== 未匹配到 error 行，回传尾部 60 行 ==="
+            tail -60 "$LOG" | sed 's/%/%25/g; s/\r//g' | while IFS= read -r l; do
+              echo "::warning::$l"
+            done
+          fi
+          echo "=== 关键错误摘要（本地留档）==="
+          tail -80 "$LOG"
+          exit 0
 
       - name: 收集产物信息
         if: always()
