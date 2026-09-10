@@ -46,3 +46,4 @@ sp_new.xml
 .run/
 ## Build outputs
 /dist
+*.apk

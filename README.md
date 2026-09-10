@@ -6,14 +6,12 @@
 
 当前版本：**v1.9.24**
 
-| 平台           | 状态                                   |
-| ------------ | ------------------------------------ |
-| Android      | 已真机验证（v1.9.23 APK 可构建安装）             |
-| HarmonyOS    | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 DevEco 编译验证 |
-| iOS          | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 macOS + Xcode 编译验证 |
-| H5 / 小程序     | 未适配（需补宿主工程与跨域方案）                     |
-
-> iOS 与鸿蒙端代码按官方文档与 Android 实现逐项对齐，但开发环境无 macOS / 鸿蒙工具链，**未经编译验证**。
+| 平台        | 状态                                          |
+| --------- | ------------------------------------------- |
+| Android   | 已真机验证（v1.9.24 APK 可构建安装）                     |
+| HarmonyOS | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 DevEco Studio 编译验证 |
+| iOS       | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 macOS + Xcode 编译验证 |
+| H5 / 小程序  | 未适配（需补宿主工程与跨域方案）                            |
 
 ## 功能特性
 
@@ -165,12 +163,12 @@ cd iosApp && pod install && open iosApp.xcworkspace
 ├── table/                           # 表格组件（KuiklyTable）
 ├── androidApp/                      # Android 宿主工程（已验证）
 │   └── src/main/java/.../           # ThemeController（主题持久化与重建）、桥接模块、各类 Adapter
-├── iosApp/                          # iOS 宿主（已适配业务，待 Xcode 验证）
+├── iosApp/                          # iOS 宿主（已适配业务）
 │   └── iosApp/
 │       ├── ThemeController.swift    # 主题三态 + UserDefaults + 重建通知
 │       ├── ContentView.swift        # 入口：pageName = stock_list
 │       └── KuiklyExpand/            # HRBridgeModule（桥接）、KRRouterHandler（路由）、VC 封装
-├── ohosApp/                         # 鸿蒙宿主（已适配业务，待 DevEco 验证）
+├── ohosApp/                         # 鸿蒙宿主（已适配业务）
 │   └── entry/src/main/ets/
 │       ├── pages/Index.ets          # 入口：默认页面 stock_list，监听主题版本重建
 │       ├── entryability/            # EntryAbility（PersistentStorage 主题持久化）
@@ -190,6 +188,5 @@ cd iosApp && pod install && open iosApp.xcworkspace
 ## 已知限制
 
 - 行情为轮询拉取，非推送；非交易时段数据为上一交易日快照
-- 引导浮层的高亮孔为直角（Kuikly 无裁剪 API）
 - iOS / 鸿蒙宿主代码尚未在对应 IDE 中编译验证，首次编译可能需按注释意图微调 API 或工程配置
 - 鸿蒙端 `dateFormatter` / `currentTimestamp` 为同步桥接调用，模板默认 `syncMode() = false`；若鸿蒙上「列表更新时间」显示为空，将 `KRBridgeModule.ets` 的 `syncMode()` 改为 `true` 再验证
