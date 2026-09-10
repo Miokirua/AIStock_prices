@@ -1481,16 +1481,16 @@ internal class StockListPage : BasePager() {
      *
      * 步骤 5-8 是菜单面板内固定位置：
      * - 菜单 panel absolutePosition(top=56f + statusBarHeight, left=0, right=0) 全宽，paddingTop/Bottom=6f
-     * - 每项 padding(14f) + text 15sp ≈ 60f 高，分隔线 1f
-     * - items 横向 from x=16，宽度 = w-32（面板 padding 16 偏移）
+     * - 每项 49dp 高，分隔线 1dp，步进 50dp
+     * - 项行占满整卡宽（x=0，width=w）
      *
-     * v1.9.20 布局规则（dp 密度无关，跨分辨率稳定）：
+     * v1.9.21 布局规则（dp 密度无关，跨分辨率稳定）：
      * - 底部 Tab 栏高度 54dp
      * - 顶栏高度 56dp + statusBar
      * - 顶栏 paddingLeft/Right=16，「刷新」marginRight=10，「☰」paddingRight=4
-     * - 菜单面板 top = 56 + sb + 19dp 偏移（实测校准：panel absolutePosition 实际起点比代码定义多 19dp）
+     * - 菜单面板 top = 56 + sb（无额外偏移；v1.9.20 的 +19dp 是实测误判，已移除）
      * - 菜单白卡 paddingTop/Bottom=6
-     * - 每项 padding(14) + text 15sp + padding(14) ≈ 48dp 高 + 1dp 分隔线
+     * - 每项 = padding(14) + text 15sp 行高 21 + padding(14) = 49dp，分隔线 1dp，步进 50dp
      *
      * 所有公式用 w/h/sb 相对量，dp 值由代码布局规则定义（所有设备一致）。
      */
