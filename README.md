@@ -6,12 +6,16 @@
 
 当前版本：**v1.9.24**
 
-| 平台        | 状态                                          |
-| --------- | ------------------------------------------- |
-| Android   | 已真机验证（v1.9.24 APK 可构建安装）                     |
-| HarmonyOS | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 DevEco Studio 编译验证 |
-| iOS       | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 macOS + Xcode 编译验证 |
-| H5 / 小程序  | 未适配（需补宿主工程与跨域方案）                            |
+| 平台        | 状态                                                       |
+| --------- | -------------------------------------------------------- |
+| Android   | 已真机验证（v1.9.24 APK 可构建安装）                                  |
+| iOS       | 宿主已适配，**已通过 GitHub Actions（macos-14）编译验证**，模拟器 Debug 包可构建      |
+| HarmonyOS | 宿主已适配（桥接 / 路由 / 主题 / 入口），需在 DevEco Studio 编译验证（共享层已同步去除 JVM 专有 API） |
+| H5 / 小程序  | 未适配（需补宿主工程与跨域方案）                                         |
+
+> iOS 的编译验证由仓库内 `.github/workflows/ios-build.yml` 自动完成：push 到 `main` 或手动触发，
+> 在 macOS runner 上执行 `generateDummyFramework → pod install → xcodebuild`，产物 `.app` 从 Actions Artifacts 下载。
+> **不含真机运行与上架**（需 Apple 签名）。
 
 ## 功能特性
 
@@ -113,6 +117,7 @@ cd iosApp && pod install && open iosApp.xcworkspace
 提交到 `main` 或用 Actions 页面手动触发 `iOS Build` workflow，会依次执行
 `generateDummyFramework` → `pod install` → `xcodebuild`（模拟器 Debug），
 产物 `iosApp-simulator-debug`（`.app`）在 Actions 运行页的 Artifacts 下载。
+当前状态：**已跑通**（共享层与 iOS 宿主代码均编译通过，模拟器包约 8.4 MB）。
 注意这只是**编译验证 + 模拟器包**，真机调试与上架仍需 Apple 签名。
 
 宿主已适配的部分：
@@ -195,5 +200,6 @@ cd iosApp && pod install && open iosApp.xcworkspace
 ## 已知限制
 
 - 行情为轮询拉取，非推送；非交易时段数据为上一交易日快照
-- iOS / 鸿蒙宿主代码尚未在对应 IDE 中编译验证，首次编译可能需按注释意图微调 API 或工程配置
+- iOS 仅验证到**模拟器 Debug 构建通过**，未做真机运行与上架（需 Apple 开发者签名）
+- 鸿蒙宿主代码尚未编译验证（需 DevEco Studio 5.1+ / API≥18）；共享层已去除 JVM 专有 API 并可用 Kotlin 2.0.21-KBA-010 链路编译
 - 鸿蒙端 `dateFormatter` / `currentTimestamp` 为同步桥接调用，模板默认 `syncMode() = false`；若鸿蒙上「列表更新时间」显示为空，将 `KRBridgeModule.ets` 的 `syncMode()` 改为 `true` 再验证
