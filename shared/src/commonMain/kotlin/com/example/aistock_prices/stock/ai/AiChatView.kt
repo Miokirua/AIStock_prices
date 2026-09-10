@@ -16,6 +16,7 @@ import com.tencent.kuikly.core.base.ComposeView
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
+import com.tencent.kuikly.core.datetime.DateTime
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
@@ -199,7 +200,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 "时间与你的知识截止无关），请直接基于这些数据回答，不要质疑数据日期为未来或不真实：\n" +
                 "$barDate 开盘 ${barOpen}、收盘 ${barClose}、最高 ${barHigh}、最低 ${barLow}、成交量 ${barVolume}"
         // 每次追问仅保留最新一条数据上下文，避免历史选中 bar 堆叠干扰
-        val now = System.currentTimeMillis()
+        val now = DateTime.currentTimestamp()
         val withCtx = conv.copy(
             messages = conv.messages.filter { it.role != ChatMessage.ROLE_CONTEXT } +
                     ChatMessage(ChatMessage.ROLE_CONTEXT, contextText, now)
@@ -1442,7 +1443,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
         // 追加 user 消息并刷新标题（用最新发问的前 14 字作为标题）
         val updated = conv.copy(
-            messages = trimmed + ChatMessage("user", text, System.currentTimeMillis()),
+            messages = trimmed + ChatMessage("user", text, DateTime.currentTimestamp()),
             title = deriveTitle(text)
         )
         ConversationStore.update(sp, updated)
@@ -1476,9 +1477,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             val nowConv = ConversationStore.load(sp).firstOrNull { it.id == conv.id }
                 ?: return@chat
             val reply = if (err != null) {
-                ChatMessage("assistant", err, System.currentTimeMillis(), error = true)
+                ChatMessage("assistant", err, DateTime.currentTimestamp(), error = true)
             } else {
-                ChatMessage("assistant", content, System.currentTimeMillis())
+                ChatMessage("assistant", content, DateTime.currentTimestamp())
             }
             ConversationStore.update(sp, nowConv.copy(messages = nowConv.messages + reply))
             reloadConversations()
@@ -1548,7 +1549,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         if (idx < 0) return
         val kept = conv.messages.subList(0, idx).toList()
         val updated = conv.copy(
-            messages = kept + ChatMessage("user", newText, System.currentTimeMillis())
+            messages = kept + ChatMessage("user", newText, DateTime.currentTimestamp())
         )
         ConversationStore.update(sp, updated)
         editingUserMsgTs = null

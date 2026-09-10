@@ -1,5 +1,6 @@
 package com.example.aistock_prices.stock.ai
 
+import com.tencent.kuikly.core.datetime.DateTime
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -75,14 +76,14 @@ object ConversationStore {
         sp.setItem(KEY, JSONObject().apply { put("list", arr) }.toString())
     }
 
-    fun newId(): String = "${System.currentTimeMillis()}_${Random.nextInt(100000)}"
+    fun newId(): String = "${DateTime.currentTimestamp()}_${Random.nextInt(100000)}"
 
     /** 新建通用会话（无关联股票） */
     fun newConversation(sp: SharedPreferencesModule): Conversation {
         val conv = Conversation(
             id = newId(),
             title = "新对话",
-            createdAt = System.currentTimeMillis()
+            createdAt = DateTime.currentTimestamp()
         )
         val list = load(sp).toMutableList()
         list.add(0, conv)
@@ -100,7 +101,7 @@ object ConversationStore {
             title = name,
             stockCode = code,
             stockName = name,
-            createdAt = System.currentTimeMillis()
+            createdAt = DateTime.currentTimestamp()
         )
         list.add(0, conv)
         save(sp, list)
