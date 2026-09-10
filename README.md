@@ -102,11 +102,18 @@ build_ohos.bat            rem 默认 Debug，或 build_ohos.bat Release
 
 ### 构建 iOS
 
-需要 macOS + Xcode + CocoaPods：
+iOS 产物**只能在 macOS 上编译**（Kotlin/Native 需要 Xcode 工具链）。有 Mac 时：
 
 ```bash
+./gradlew :shared:generateDummyFramework   # pod install 前置，跳过会导致运行时崩溃
 cd iosApp && pod install && open iosApp.xcworkspace
 ```
+
+**没有 Mac** 时走仓库自带的 GitHub Actions（`macos-14` runner，公开仓库免费）：
+提交到 `main` 或用 Actions 页面手动触发 `iOS Build` workflow，会依次执行
+`generateDummyFramework` → `pod install` → `xcodebuild`（模拟器 Debug），
+产物 `iosApp-simulator-debug`（`.app`）在 Actions 运行页的 Artifacts 下载。
+注意这只是**编译验证 + 模拟器包**，真机调试与上架仍需 Apple 签名。
 
 宿主已适配的部分：
 
