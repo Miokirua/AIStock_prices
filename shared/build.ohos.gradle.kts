@@ -1,44 +1,15 @@
+// 鸿蒙专用构建脚本：仅在 -c settings.ohos.gradle.kts 下生效
+// 工具链为 Kotlin 2.0.21-KBA-010（见根 build.ohos.gradle.kts），产物 libshared.so
+// 依赖统一使用 -2.0.21-ohos 变体（Kuikly 内核与 Markdown 均有 ohos 变体）
 plugins {
     kotlin("multiplatform")
-    kotlin("native.cocoapods")
-    id("com.android.library")
     id("com.google.devtools.ksp")
-    id("maven-publish")
-
 }
 
-val KEY_PAGE_NAME = "pageName"
-
 kotlin {
-    androidTarget {
-        compilations.all {
-            kotlinOptions {
-                jvmTarget = "1.8"
-            }
-        }
-        publishLibraryVariants("release")
-    }
-
-    iosX64()
-    iosArm64()
-    iosSimulatorArm64()
-
-    cocoapods {
-        summary = "Some description for the Shared Module"
-        homepage = "Link to the Shared Module homepage"
-        version = "1.0"
-        ios.deploymentTarget = "14.1"
-        podfile = project.file("../iosApp/Podfile")
-        framework {
-            baseName = "shared"
-            freeCompilerArgs = freeCompilerArgs + getCommonCompilerArgs()
-            isStatic = true
-            license = "MIT"
-        }
-    }
-
     ohosArm64 {
-        binaries.sharedLib {
+        binaries.sharedLib("shared") {
+            freeCompilerArgs += "-Xadd-light-debug=enable"
         }
     }
 
@@ -47,94 +18,18 @@ kotlin {
             dependencies {
                 implementation("com.tencent.kuikly-open:core:${Version.getKuiklyOhosVersion()}")
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyOhosVersion()}")
-
+                // Markdown 渲染（AI 问答/结果页）：ohos 变体仅提供 2.0.21 版本，与鸿蒙工具链匹配
+                implementation("com.tencent.kuiklybase:KuiklyMarkdown:1.0.6-2.0.21-ohos")
+                // 注：主构建（build.gradle.kts）里的 kotlinx-coroutines / kotlinx-serialization 此处不加：
+                // ① 业务代码与 chart/table 均未直接使用（全仓 grep 无引用）；
+                // ② 官方与腾讯镜像均未发布这两个库的 ohosArm64 klib 变体，加了会直接依赖解析失败。
+                implementation(project(":chart"))
+                implementation(project(":table"))
             }
-        }
-        val commonTest by getting {
-            dependencies {
-                implementation(kotlin("test"))
-            }
-        }
-        val androidMain by getting {
-            dependencies {
-                api("com.tencent.kuikly-open:core-render-android:${Version.getKuiklyOhosVersion()}")
-            }
-        }
-
-        val iosX64Main by getting
-        val iosArm64Main by getting
-        val iosSimulatorArm64Main by getting
-        val iosMain by creating {
-            dependsOn(commonMain)
-            iosX64Main.dependsOn(this)
-            iosArm64Main.dependsOn(this)
-            iosSimulatorArm64Main.dependsOn(this)
-        }
-        val iosX64Test by getting
-        val iosArm64Test by getting
-        val iosSimulatorArm64Test by getting
-        val iosTest by creating {
-            dependsOn(commonTest)
-            iosX64Test.dependsOn(this)
-            iosArm64Test.dependsOn(this)
-            iosSimulatorArm64Test.dependsOn(this)
         }
     }
-}
-
-group = "com.example.aistock_prices"
-version = System.getenv("kuiklyBizVersion") ?: "1.0.0"
-
-publishing {
-    repositories {
-        maven {
-            credentials {
-                username = System.getenv("mavenUserName") ?: ""
-                password = System.getenv("mavenPassword") ?: ""
-            }
-            rootProject.properties["mavenUr?"]?.toString()?.let { url = uri(it) }
-        }
-    }
-}
-
-ksp {
-    arg(KEY_PAGE_NAME, getPageName())
 }
 
 dependencies {
-    compileOnly("com.tencent.kuikly-open:core-ksp:${Version.getKuiklyOhosVersion()}") {
-        add("kspAndroid", this)
-        add("kspIosArm64", this)
-        add("kspIosX64", this)
-        add("kspIosSimulatorArm64", this)
-        add("kspOhosArm64", this)
-    }
-}
-
-android {
-    namespace = "com.example.aistock_prices.shared"
-    compileSdk = 34
-    defaultConfig {
-        minSdk = 21
-        targetSdk = 30
-    }
-    sourceSets {
-        named("main") {
-            assets.srcDirs("src/commonMain/assets")
-        }
-    }
-}
-
-fun getPageName(): String {
-    return (project.properties[KEY_PAGE_NAME] as? String) ?: ""
-}
-
-fun getCommonCompilerArgs(): List<String> {
-    return listOf(
-        "-Xallocator=std"
-    )
-}
-
-fun getLinkerArgs(): List<String> {
-    return listOf()
+    add("kspOhosArm64", "com.tencent.kuikly-open:core-ksp:${Version.getKuiklyOhosVersion()}")
 }

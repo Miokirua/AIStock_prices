@@ -6,10 +6,14 @@ import window from '@ohos.window';
 import { KuiklyRenderAdapterManager } from '@kuikly-open/render';
 import { LogAdapter } from '../kuikly/adapter/LogAdapter';
 import { RouterAdapter } from '../kuikly/adapter/RouterAdapter';
+import { ThemeController } from '../kuikly/ThemeController';
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
+    // 主题偏好持久化（必须在 loadContent 之前声明）
+    PersistentStorage.persistProp(ThemeController.KEY_MODE, ThemeController.MODE_AUTO);
+    PersistentStorage.persistProp(ThemeController.KEY_VERSION, 0);
   }
 
   onDestroy(): void {

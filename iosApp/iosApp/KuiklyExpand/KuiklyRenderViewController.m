@@ -2,6 +2,7 @@
 #import "UINavigationController+FDFullscreenPopGesture.h"
 #import <OpenKuiklyIOSRender/KuiklyRenderViewControllerBaseDelegator.h>
 #import <OpenKuiklyIOSRender/KuiklyRenderContextProtocol.h>
+#import "iosApp-Swift.h"
 
 #define HRWeakSelf __weak typeof(self) weakSelf = self;
 @interface KuiklyRenderViewController()<KuiklyRenderViewControllerBaseDelegatorDelegate>
@@ -27,7 +28,12 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.fd_prefersNavigationBarHidden = YES;
-    self.view.backgroundColor = [UIColor whiteColor];
+    self.view.backgroundColor = [self p_themedBackgroundColor];
+    // 主题切换后重建根页面（ContentView 通过 .id() 重建），此处同步刷新已存在页面的底色
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(p_themeDidChange)
+                                                 name:ThemeController.themeChangedNotificationName
+                                               object:nil];
     [_delegator viewDidLoadWithView:self.view];
     [self.navigationController setNavigationBarHidden:YES animated:NO];
 
@@ -65,21 +71,35 @@
 
 - (NSDictionary *)p_mergeExtParamsWithOriditalParam:(NSDictionary *)pageParam {
     NSMutableDictionary *mParam = [(pageParam ?: @{}) mutableCopy];
-
+    // 主题注入：所有页面（含 openPage 推入的子页面）都必须带上，否则子页面会固定按浅色渲染。
+    // 键名须与 shared BasePager 一致：IS_NIGHT_MODE_KEY="isNightMode" / IS_THEME_MODE_KEY="themeMode"
+    mParam[@"isNightMode"] = @([[ThemeController shared] currentNight]);
+    mParam[@"themeMode"] = @([[ThemeController shared] mode]);
     return mParam;
 }
 
 #pragma mark - KuiklyRenderViewControllerDelegatorDelegate
 
+- (void)p_themeDidChange {
+    self.view.backgroundColor = [self p_themedBackgroundColor];
+}
+
+- (UIColor *)p_themedBackgroundColor {
+    if (@available(iOS 13.0, *)) {
+        return [UIColor systemBackgroundColor];
+    }
+    return [UIColor whiteColor];
+}
+
 - (UIView *)createLoadingView {
     UIView *loadingView = [[UIView alloc] init];
-    loadingView.backgroundColor = [UIColor whiteColor];
+    loadingView.backgroundColor = [self p_themedBackgroundColor];
     return loadingView;
 }
 
 - (UIView *)createErrorView {
     UIView *errorView = [[UIView alloc] init];
-    errorView.backgroundColor = [UIColor whiteColor];
+    errorView.backgroundColor = [self p_themedBackgroundColor];
     return errorView;
 }
 

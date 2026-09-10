@@ -26,6 +26,9 @@ rootProject.name = "AiStock_prices"
 val buildFileName = "build.ohos.gradle.kts"
 rootProject.buildFileName = buildFileName
 
-include(":androidApp")
 include(":shared")
 project(":shared").buildFileName = buildFileName
+include(":chart")
+project(":chart").buildFileName = buildFileName
+include(":table")
+project(":table").buildFileName = buildFileName
