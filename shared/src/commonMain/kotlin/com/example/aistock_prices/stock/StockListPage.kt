@@ -712,45 +712,75 @@ internal class StockListPage : BasePager() {
                 }
             }
 
-            // ---------- 首启引导：步骤遮罩（整层 mask + 高亮孔覆盖 + 说明卡） ----------
-            // v1.9.20 架构重构：
-            // - 废弃 vif 包裹整个 mask 容器（vif lambda 只在 false→true 进入一次，子 view 用初始值 (0,0,0,0) 不绘制）
-            // - 容器 always-mounted，里面 vif 包裹"高亮孔/描边/说明卡"内容
-            // - 整层 mask 跟 menu panel 同写法（absolutePosition 全边锚定 + backgroundColor maskDim）确保可靠绘制
-            // - 高亮孔用 pal.bgPage 覆盖在 mask 上形成"挖孔"效果
+            // ---------- 首启引导：步骤遮罩（四块半透明遮罩拼出真透明挖孔 + 描边 + 说明卡） ----------
+            // v1.9.21 架构（v1.9.20 两个缺陷的修复）：
+            // 1) 容器 always-mounted 但【容器层不挂任何事件】，遮罩与事件全在 vif 内部；
+            //    guideStep=0 时 vif 整棵子树移除，不残留任何视图拦截触摸。
+            //    （v1.9.20 用 opacity(0) 隐藏整层 mask，但 opacity 不影响命中测试，
+            //     引导结束后全屏不可交互）
+            // 2) 高亮孔真正透明：上/下/左/右四块半透明遮罩拼出挖孔，孔内直接看到目标元素。
+            //    （v1.9.20 用 pal.bgPage 不透明色块盖在 mask 上当"孔"，孔内全黑看不见目标）
+            // 所有尺寸/坐标都在 attr lambda 内部读 observable，guideRect 变化时即时重算。
             View {
                 attr {
                     absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
                     zIndex(150)
                 }
-                // 整层半透明 mask 背景（始终挂载，但仅在 guideStep>0 时实际显示）
-                // 用 visible 而不是 vif 包裹，确保 view 始终在树中、backgroundColor 始终响应主题
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        backgroundColor(ctx.pal.maskDim)
-                        opacity(if (ctx.guideStep > 0) 1f else 0f)
-                    }
-                    event {
-                        click { }
-                        touchDown { }
-                        touchMove { }
-                        touchUp { }
-                        touchCancel { }
-                    }
-                }
                 vif({ ctx.guideStep > 0 }) {
-                    // 高亮孔：用页面背景色"挖出"目标区域
+                    // 四块遮罩全部用【纯边锚定】推导尺寸（不设 width/height）：
+                    // 真机实测 absolutePosition 混合"left+right 锚定 + 显式 height"不渲染，
+                    // 而纯锚定（询问弹窗/菜单背板）与"top/left + width/height"（描边框）均正常。
+                    // 上遮罩（0 .. rect.y）
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = 0f,
+                                left = 0f,
+                                right = 0f,
+                                bottom = (ctx.guideScreenH() - ctx.guideRect.y).coerceAtLeast(0f)
+                            )
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 下遮罩（rect 底 .. 屏底）
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = (ctx.guideRect.y + ctx.guideRect.height).coerceAtLeast(0f),
+                                left = 0f,
+                                right = 0f,
+                                bottom = 0f
+                            )
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
+                    }
+                    // 左遮罩（孔左侧同一水平带）
                     View {
                         attr {
                             absolutePosition(
                                 top = ctx.guideRect.y.coerceAtLeast(0f),
-                                left = ctx.guideRect.x.coerceAtLeast(0f)
+                                left = 0f,
+                                right = (ctx.guideScreenW() - ctx.guideRect.x).coerceAtLeast(0f),
+                                bottom = (ctx.guideScreenH() - ctx.guideRect.y - ctx.guideRect.height).coerceAtLeast(0f)
                             )
-                            width(ctx.guideRect.width.coerceAtLeast(0f))
-                            height(ctx.guideRect.height.coerceAtLeast(0f))
-                            backgroundColor(ctx.pal.bgPage)
+                            backgroundColor(ctx.pal.maskDim)
                         }
+                        event { click { } }
+                    }
+                    // 右遮罩（孔右侧同一水平带）
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = ctx.guideRect.y.coerceAtLeast(0f),
+                                left = (ctx.guideRect.x + ctx.guideRect.width).coerceAtLeast(0f),
+                                right = 0f,
+                                bottom = (ctx.guideScreenH() - ctx.guideRect.y - ctx.guideRect.height).coerceAtLeast(0f)
+                            )
+                            backgroundColor(ctx.pal.maskDim)
+                        }
+                        event { click { } }
                     }
                     // 高亮描边
                     View {
@@ -1397,7 +1427,6 @@ internal class StockListPage : BasePager() {
     /** 询问弹窗「开始引导」 */
     private fun startGuide() {
         showGuidePrompt = false
-        println("[Guide] startGuide rootW=${guideRootRef?.frame?.width} rootH=${guideRootRef?.frame?.height} pageViewW=${pagerData.pageViewWidth} pageViewH=${pagerData.pageViewHeight} statusBar=${pagerData.statusBarHeight}")
         gotoGuideStep(1)
     }
 
@@ -1469,13 +1498,10 @@ internal class StockListPage : BasePager() {
         val w = guideScreenW()
         val h = guideScreenH()
         val sb = pagerData.statusBarHeight
-        val itemX = 16f
-        val itemW = (w - 32f).coerceAtLeast(0f)
-        val itemH = 48f
-        val itemStep = 49f  // item 48dp + divider 1dp
-        // 菜单白卡 y 起点 = panel top + 6dp paddingTop
-        // panel top 实测比代码定义 (sb+56) 多 19dp
-        val menuY = sb + 56f + 19f + 6f
+        val itemH = 49f
+        val itemStep = 50f  // item 49dp（padding14+文字行高21+padding14）+ divider 1dp
+        // 菜单项 y = panel top (sb+56) + 白卡 paddingTop 6 + 项序号 * 50
+        val menuY = sb + 62f
         return when (step) {
             // 底部 Tab 栏：自选股(左半) / AI问答(右半)
             1 -> Frame(0f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
@@ -1485,11 +1511,11 @@ internal class StockListPage : BasePager() {
             3 -> Frame((w - 100f).coerceAtLeast(0f), sb + 15f, 50f, 26f)
             // 顶栏「☰」：paddingLeft(8)+"☰" 20sp+paddingRight(4)≈38dp，距右 4dp
             4 -> Frame((w - 42f).coerceAtLeast(0f), sb + 9f, 38f, 38f)
-            // 菜单面板 4 项：起点 menuY，每项 48dp + 1dp divider
-            5 -> Frame(itemX, menuY + 0f * itemStep, itemW, itemH)
-            6 -> Frame(itemX, menuY + 1f * itemStep, itemW, itemH)
-            7 -> Frame(itemX, menuY + 2f * itemStep, itemW, itemH)
-            8 -> Frame(itemX, menuY + 3f * itemStep, itemW, itemH)
+            // 菜单面板 4 项：全宽行（菜单卡 left=0/right=0，项行占满整卡宽）
+            5 -> Frame(0f, menuY, w, itemH)
+            6 -> Frame(0f, menuY + itemStep, w, itemH)
+            7 -> Frame(0f, menuY + 2f * itemStep, w, itemH)
+            8 -> Frame(0f, menuY + 3f * itemStep, w, itemH)
             else -> Frame(16f, sb + 80f, w - 32f, 120f)
         }
     }
