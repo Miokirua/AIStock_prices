@@ -10,7 +10,9 @@ import UIKit
 ///
 /// 注意：本文件未经 Xcode 编译验证（开发环境无 macOS），如遇 API/工程配置差异按注释意图微调。
 extension Notification.Name {
-    static let kuiklyThemeChanged: Notification.Name {
+    /// 注意：必须是 `static var`（计算属性），写成 `static let` 会编译报错
+    /// "'let' declarations cannot be computed properties"
+    static var kuiklyThemeChanged: Notification.Name {
         Notification.Name(ThemeController.themeChangedNotificationName)
     }
 }
@@ -55,7 +57,11 @@ extension Notification.Name {
     }
 
     /// 供 HRBridgeModule setThemeMode 调用：持久化并触发全页面重建
-    @objc func setMode(_ newMode: Int) {
+    ///
+    /// ⚠️ 方法名不能叫 `setMode(_:)`：`@objc` 属性 `mode` 会自动生成 `setMode:` 选择器，
+    /// 与之冲突会编译报错 "method 'setMode' with Objective-C selector 'setMode:'
+    /// conflicts with setter for 'mode' with the same Objective-C selector"。
+    @objc func applyThemeMode(_ newMode: Int) {
         mode = newMode
         UserDefaults.standard.set(newMode, forKey: ThemeController.key)
         DispatchQueue.main.async {

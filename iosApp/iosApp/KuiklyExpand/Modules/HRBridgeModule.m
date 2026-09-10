@@ -90,7 +90,7 @@
     NSDictionary *params = [args[KR_PARAM_KEY] hr_stringToDictionary];
     NSInteger mode = [params[@"mode"] integerValue];
     dispatch_async(dispatch_get_main_queue(), ^{
-        [[ThemeController shared] setMode:mode];
+        [[ThemeController shared] applyThemeMode:mode];
     });
 }
 
