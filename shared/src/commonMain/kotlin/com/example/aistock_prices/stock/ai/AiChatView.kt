@@ -347,7 +347,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     }
                     Text {
                         attr {
-                            text(ctx.activeConv()?.displayName ?: "选择会话")
+                            // 无会话时不再提示"选择会话"：发送即可自动新建，标题直接显示为「新对话」
+                            text(ctx.activeConv()?.displayName ?: "新对话")
                             fontSize(14f)
                             fontWeightSemiBold()
                             color(ctx.pal.textMain)
@@ -1421,13 +1422,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
     private fun doSend(text: String) {
         if (sending) return
-        val conv = activeConv() ?: return
         // 仅当存在"启用中的预设"才允许发送（停用/删除配置后不再能产生回复）
         val config = activeAiConfig()
         if (config == null) {
             bridgeToast("请先配置 AI 服务")
             return
         }
+        // 无会话 / 未选中会话时自动新建，保证首次进入（空列表）或删除全部会话后仍能直接发问
+        val conv = ensureConversationForSend() ?: return
         sending = true
         pendingMenuMsgTs = null
         chatInputRef?.view?.setText("")
@@ -1451,6 +1453,32 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         scrollToBottom()
         // 公共 chat 逻辑（chatSeq 竞态保护）
         callChat(updated, updated.messages, config)
+    }
+
+    /**
+     * 发送前的会话兜底：无会话列表或未选中会话时自动新建一个通用会话，
+     * 使「首次进入 AI 问答页」「删除了最后一个会话」等场景下输入后可直接发送。
+     * 返回 null 表示未配置 AI 服务（已 toast 提示，不产生空会话）。
+     */
+    private fun ensureConversationForSend(): Conversation? {
+        activeConv()?.let { return it }
+        if (!isConfigured()) {
+            bridgeToast("请先配置 AI 服务")
+            return null
+        }
+        // 列表非空却未选中任何会话（异常态）：回退到已有会话，避免堆积空会话
+        val existing = conversations.firstOrNull()
+        if (existing != null) {
+            activeId = existing.id
+            sp.setItem(KEY_ACTIVE_ID, existing.id)
+            reloadConversations()
+            return existing
+        }
+        val conv = ConversationStore.newConversation(sp)
+        activeId = conv.id
+        sp.setItem(KEY_ACTIVE_ID, conv.id)
+        reloadConversations()
+        return conv
     }
 
     /**
