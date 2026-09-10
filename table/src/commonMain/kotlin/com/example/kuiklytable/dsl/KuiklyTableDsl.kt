@@ -5,6 +5,8 @@ import com.example.kuiklytable.model.*
 import com.example.kuiklytable.view.KuiklyTableView
 
 class KuiklyTableConfig {
+    /** 表格整体底色：容器背景，同时作为关闭斑马纹时的数据行底色 */
+    var backgroundColor = 0xFFFFFFFF
     var headerBackgroundColor = 0xFFF5F7FA
     var headerTextColor = 0xFF333333
     var headerFontSize = 14f

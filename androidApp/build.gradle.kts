@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.aistock_prices"
         minSdk = 23
         targetSdk = 30
-        versionCode = 24
-        versionName = "1.9.24"
+        versionCode = 25
+        versionName = "1.9.25"
     }
 
     buildTypes {

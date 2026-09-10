@@ -25,7 +25,7 @@ class KuiklyTableView(
                 attr {
                     flex(1f)
                     flexDirection(FlexDirection.COLUMN)
-                    backgroundColor(Color(0xFFFFFFFF))
+                    backgroundColor(Color(ctx.tableConfig.backgroundColor))
                 }
 
                 // 表头 - 直接遍历，不用 if
@@ -69,10 +69,11 @@ class KuiklyTableView(
 
                 // 数据行 - 直接遍历
                 ctx.tableRows.forEachIndexed { idx, row ->
-                    val bg = row.backgroundColor ?: if (ctx.tableConfig.showZebraStripe && idx % 2 != 0) {
-                        ctx.tableConfig.oddRowBackgroundColor
-                    } else {
-                        ctx.tableConfig.evenRowBackgroundColor
+                    val bg = row.backgroundColor ?: when {
+                        // 关闭斑马纹时用表格底色，避免夜间模式回退到浅色默认值
+                        !ctx.tableConfig.showZebraStripe -> ctx.tableConfig.backgroundColor
+                        idx % 2 != 0 -> ctx.tableConfig.oddRowBackgroundColor
+                        else -> ctx.tableConfig.evenRowBackgroundColor
                     }
                     View {
                         attr {

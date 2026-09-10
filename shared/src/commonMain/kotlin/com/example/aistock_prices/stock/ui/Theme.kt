@@ -52,6 +52,8 @@ class ThemePalette(
     val warnBorder: Color,
     /** 修改模式提示条：文字 */
     val warnText: Color,
+    /** 风险/错误提示块背景（与 errRed 文字搭配） */
+    val errBg: Color,
     /** 深色半透明遮罩（抽屉/菜单外遮罩，0x33 级别） */
     val maskDim: Color,
     /** 更深遮罩（Modal 弹窗外，0x66 级别） */
@@ -88,6 +90,7 @@ object ThemePalettes {
         warnBg = Color(0xFFFFF7E6),
         warnBorder = Color(0xFFFFE7BA),
         warnText = Color(0xFFAD6800),
+        errBg = Color(0xFFFFF1F0),
         maskDim = Color(0x33000000),
         maskFull = Color(0x66000000)
     )
@@ -112,6 +115,7 @@ object ThemePalettes {
         warnBg = Color(0xFF3A3120),
         warnBorder = Color(0xFF55492C),
         warnText = Color(0xFFE5B35C),
+        errBg = Color(0xFF3A2422),
         maskDim = Color(0x59000000),
         maskFull = Color(0x80000000)
     )

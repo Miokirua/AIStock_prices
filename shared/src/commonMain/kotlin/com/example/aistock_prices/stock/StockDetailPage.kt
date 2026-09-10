@@ -1101,14 +1101,14 @@ internal class StockDetailPage : BasePager() {
                     attr {
                         marginTop(12f)
                         borderRadius(8f)
-                        backgroundColor(Color(0xFFFFF7E6))
+                        backgroundColor(ctx.pal.warnBg)
                         padding(10f)
                     }
                     Text {
                         attr {
                             text("操作建议：${result.suggestion}")
                             fontSize(13f)
-                            color(Color(0xFFB87A00))
+                            color(ctx.pal.warnText)
                             lineHeight(20f)
                         }
                     }
@@ -1175,7 +1175,7 @@ internal class StockDetailPage : BasePager() {
                     attr {
                         marginTop(12f)
                         borderRadius(8f)
-                        backgroundColor(Color(0xFFFFF1F0))
+                        backgroundColor(ctx.pal.errBg)
                         padding(10f)
                     }
                     Text {
@@ -1438,10 +1438,14 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
                     KuiklyTable(data) {
+                        // 表格底色：日间为白、夜间为卡片深色（pal.card 已按主题取值）
+                        backgroundColor = ctx.pal.card.hexColor
                         headerBackgroundColor = if (ctx.isNightMode()) 0xFF2A3039 else 0xFFF5F6F8
                         headerTextColor = if (ctx.isNightMode()) 0xFF98A2B3 else 0xFF666666
                         cellTextColor = if (ctx.isNightMode()) 0xFFE6E9EF else 0xFF1A1A1A
                         borderColor = if (ctx.isNightMode()) 0xFF363D48 else 0xFFEEEEEE
+                        evenRowBackgroundColor = ctx.pal.card.hexColor
+                        oddRowBackgroundColor = ctx.pal.card.hexColor
                         cellPaddingH = 16f
                         showZebraStripe = false
                         showOuterBorder = false
