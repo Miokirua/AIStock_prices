@@ -55,12 +55,21 @@ jobs:
           pod --version
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
 
+      - name: 修正脚本执行权限
+        run: |
+          chmod +x gradlew || true
+          ls -la gradlew
+
       - name: 生成 dummy framework（pod install 前置，跳过会导致运行时崩溃）
         run: ./gradlew :shared:generateDummyFramework --stacktrace
 
       - name: 安装 CocoaPods 依赖
         working-directory: iosApp
-        run: pod install --verbose
+        run: pod install
+
+      - name: 列出 Xcode scheme（诊断用）
+        working-directory: iosApp
+        run: xcodebuild -list -workspace iosApp.xcworkspace
 
       - name: xcodebuild 编译模拟器 App
         working-directory: iosApp
@@ -75,7 +84,7 @@ jobs:
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build 2>&1 | tail -300
+            build 2>&1 | tail -400
 
       - name: 收集产物信息
         if: always()
