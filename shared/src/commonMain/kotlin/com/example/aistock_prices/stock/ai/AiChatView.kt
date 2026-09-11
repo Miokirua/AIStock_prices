@@ -665,20 +665,50 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     alignItems(if (msg.role == "user") FlexAlign.FLEX_END else FlexAlign.FLEX_START)
                 }
                 if (msg.role == "user") {
-                    // 用户气泡：右对齐纯文本
+                    // 用户气泡：右对齐。带「引用上文」的消息拆成「引用节选 + 我的问题」两段渲染，
+                    // 见 splitQuotedMessage（完整引用原文只用于提交给 AI，不整段铺在气泡里）。
                     // 注：Kuikly 的 maxWidth 在 flex 容器内对 Text 不可靠（Text 按内容测量撑开），
                     // 需用固定 width 强制换行，避免长消息溢出屏幕。
+                    val bubble = ctx.splitQuotedMessage(msg.content)
+                    val quoted = bubble.quote
                     View {
                         attr {
                             width(ctx.pagerData.pageViewWidth - 80f)
                             borderRadius(12f)
                             padding(12f)
                             backgroundColor(ctx.pal.accent)
+                            flexDirectionColumn()
+                        }
+                        if (quoted != null) {
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    marginBottom(7f)
+                                }
+                                // 左侧引用竖线（行方向默认 stretch，会随引用文字高度铺满）
+                                View {
+                                    attr {
+                                        width(2.5f)
+                                        borderRadius(1.5f)
+                                        marginRight(7f)
+                                        backgroundColor(0x66FFFFFF)
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("💬 " + quoted)
+                                        fontSize(12f)
+                                        color(0xB3FFFFFF)
+                                        lineHeight(17f)
+                                    }
+                                }
+                            }
                         }
                         Text {
                             attr {
                                 // 旧版本曾把"（数据上下文：…）"拼在提问尾部，渲染时剥离避免暴露给用户
-                                text(stripContextSuffix(msg.content))
+                                text(bubble.question)
                                 fontSize(14f)
                                 color(ctx.pal.onAccent)
                                 lineHeight(20f)
@@ -686,7 +716,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                     }
                 } else {
-                    val longReply = msg.content.length > CHAT_SUMMARY_MAX
+                    val longReply = msg.content.length > CHAT_LONG_REPLY_MIN
                     View {
                         attr {
                             maxWidth(ctx.pagerData.pageViewWidth - 40f)
@@ -859,8 +889,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
     /**
      * 长回复的「简单回答」：先剔除 ```stock 行情卡片标记（避免摘要出现围栏残迹/半截代码块），
-     * 再取正文开头数句要点——在段落/句末标点边界切分，最多 CHAT_SUMMARY_MAX 字，末尾附查看提示。
+     * 再按行取正文开头要点，最多 CHAT_SUMMARY_MAX 字，末尾附查看提示。
      * 完整内容由「查看完整分析」跳转独立详情页展示。
+     *
+     * ⚠️ 必须「按行」而不是按字符切：AI 回复习惯以 `## 一、盘面概述` 这类小标题开头，
+     * 纯字符截断经常刚好停在标题末尾，摘要就只剩一个标题、一句正文都没有（用户反馈很怪）。
+     * 因此这里保证节选里**至少含一段非标题正文**。
      */
     private fun summarizeForChat(content: String): String {
         val plain = parseChatSegments(content)
@@ -868,15 +902,49 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             .joinToString("\n") { it.text.trim() }
             .trim()
         if (plain.isBlank()) return "AI 已生成回复，详细内容请查看完整分析。"
-        val max = CHAT_SUMMARY_MAX
-        if (plain.length <= max) return plain
-        // 尝试在最近的换行或句末标点边界切，避免切断 Markdown 列表/代码块/一句话
-        val cut = (max downTo (max * 3 / 4))
+        if (plain.length <= CHAT_SUMMARY_MAX) return plain
+
+        val all = plain.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        // Markdown 表格行（以 | 开头）不进节选：正好截在半张表时，`| 层级 | 业务 |` 这类
+        // 原始竖线会被当成普通段落渲染出来，很难看；表格本身也属于细节，节选留正文更连贯。
+        // 极端情况（整段几乎都是表格）再退回原样，避免节选变空。
+        val bodyLines = all.filterNot { it.startsWith("|") }
+        val lines = if (bodyLines.joinToString("\n").length >= 40) bodyLines else all
+        val picked = ArrayList<String>()
+        var len = 0
+        for (line in lines) {
+            // 已有一段正文后才允许因超长而停止，避免摘要只剩标题
+            val hasBody = picked.any { !it.startsWith("#") }
+            if (picked.isNotEmpty() && hasBody && len + line.length > CHAT_SUMMARY_MAX) break
+            if (picked.isEmpty() && line.length > CHAT_SUMMARY_MAX) {
+                // 首行本身就是一大段：按标点/边界硬截
+                picked.add(cutAtBoundary(line, CHAT_SUMMARY_MAX))
+                break
+            }
+            picked.add(line)
+            len += if (picked.size == 1) line.length else line.length + 1
+            if (len >= CHAT_SUMMARY_MAX && picked.any { !it.startsWith("#") }) break
+        }
+        // 兜底：全是标题（AI 先列小节名再写正文的场景）→ 至少补一段正文进来
+        if (picked.isNotEmpty() && picked.all { it.startsWith("#") }) {
+            val next = lines.firstOrNull { !it.startsWith("#") && it !in picked }
+            if (next != null) {
+                picked.add(if (next.length > CHAT_SUMMARY_MAX) cutAtBoundary(next, CHAT_SUMMARY_MAX) else next)
+            }
+        }
+        return picked.joinToString("\n").trimEnd() + "\n\n…（完整分析请点下方）"
+    }
+
+    /** 在标点/换行边界处把 [text] 截到 [max] 字以内，避免切断一句话 */
+    private fun cutAtBoundary(text: String, max: Int): String {
+        if (text.length <= max) return text
+        val from = if (max >= text.length) text.length - 1 else max
+        val cut = (from downTo (max * 3 / 4))
             .firstOrNull { i ->
-                val c = plain[i]
+                val c = text[i]
                 c == '\n' || c == '。' || c == '！' || c == '？' || c == '；' || c == ';'
             } ?: max
-        return plain.substring(0, cut + 1).trimEnd() + "\n\n…（完整分析请点下方）"
+        return text.substring(0, cut + 1).trimEnd()
     }
 
     /** 打开「查看完整分析」：携带当前会话 id 与消息时间戳，由宿主跳转 result_detail 独立详情页 */
@@ -1837,16 +1905,47 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         quoteMsgTs = null
     }
 
-    /** 引用条展示的正文节选（前 40 字；去 Markdown 标记与空白，避免预览里满是 # 与 >） */
+    /**
+     * 引用条展示的正文节选。
+     * 引用条是输入区上方的一行提示，完整正文没必要（也放不下）——只取前 QUOTE_PREVIEW_MAX 字，
+     * 保证单行内一眼能认出引的是哪条；真正提交给 AI 的仍是完整原文（见 doSend）。
+     */
     private fun quotedPreview(): String {
         val ts = quoteMsgTs ?: return ""
         val content = activeMsgs.firstOrNull { it.ts == ts }?.content ?: return ""
-        val flat = stripContextSuffix(content)
+        return flattenQuoteText(stripContextSuffix(content), QUOTE_PREVIEW_MAX)
+    }
+
+    /**
+     * 把一段 Markdown 正文压成适合「引用」展示的短预览：去行首标记（#、>、列表符）、
+     * 强调/代码标记、表格竖线，并把所有空白折成单空格，最后按 [max] 字截断加省略号。
+     */
+    private fun flattenQuoteText(raw: String, max: Int): String {
+        val flat = raw
             .replace(Regex("(?m)^[#>*+\\-\\s]+"), "") // 行首 Markdown 标记
             .replace(Regex("[*`_]{1,3}"), "")        // 强调/代码标记
+            .replace("|", " ")                       // 表格分隔
             .replace(Regex("\\s+"), " ")
             .trim()
-        return if (flat.length <= 40) flat else flat.substring(0, 40) + "…"
+        return if (flat.length <= max) flat else flat.substring(0, max) + "…"
+    }
+
+    /**
+     * 用户消息里的「引用上文」原文由 doSend 拼进 content 一起提交（【引用上文】…【我的问题】…）。
+     * 直接渲染会把整段引用正文（动辄上千字）铺满气泡好几屏，因此拆成两段：
+     * 引用只取 [QUOTE_BUBBLE_MAX] 字作来源提示，问题正常显示。
+     * content 本身保持完整（提交给 AI 与本地存档的都是全文），这里只影响渲染。
+     */
+    private fun splitQuotedMessage(content: String): QuotedMessage {
+        val text = stripContextSuffix(content)
+        val qTag = "【引用上文】"
+        val aTag = "【我的问题】"
+        val qi = text.indexOf(qTag)
+        val ai = text.indexOf(aTag)
+        if (qi < 0 || ai <= qi) return QuotedMessage(null, text)
+        val preview = flattenQuoteText(text.substring(qi + qTag.length, ai), QUOTE_BUBBLE_MAX)
+        val question = text.substring(ai + aTag.length).trim()
+        return QuotedMessage(preview.ifBlank { null }, question.ifBlank { text })
     }
 
     private fun bridgeToast(msg: String) {
@@ -1856,10 +1955,23 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         bridge.toast(msg)
     }
 
+    /** 用户气泡拆解结果：quote 为「引用上文」预览（无引用时为 null），question 为真正要问的问题 */
+    private data class QuotedMessage(val quote: String?, val question: String)
+
     companion object {
         private const val KEY_ACTIVE_ID = "ai_chat_active_id"
-        /** AI 回复超过此长度视为长回复：对话内只展示开头节选，完整内容进「查看完整分析」详情页 */
-        private const val CHAT_SUMMARY_MAX = 120
+        /**
+         * AI 回复超过此长度视为长回复：对话内只展示开头节选，完整内容进「查看完整分析」详情页。
+         * 与节选长度分开：120~220 字的中等回复直接整段展示（节选反而像被截断），
+         * 只有明显更长的内容才走「节选 + 查看完整分析」。
+         */
+        private const val CHAT_LONG_REPLY_MIN = 120
+        /** 长回复在对话内的节选字数上限（按行累加，且保证至少含一段正文） */
+        private const val CHAT_SUMMARY_MAX = 220
+        /** 输入区上方引用条的预览字数（只作提示用，提交给 AI 的仍是完整原文） */
+        private const val QUOTE_PREVIEW_MAX = 20
+        /** 用户气泡里「引用上文」的预览字数（完整原文仍在 content 中提交给 AI） */
+        private const val QUOTE_BUBBLE_MAX = 40
     }
 }
 
