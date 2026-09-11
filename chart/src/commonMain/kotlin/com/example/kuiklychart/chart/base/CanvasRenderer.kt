@@ -24,6 +24,19 @@ data class ChartArea(
 }
 
 /**
+ * 热区矩形（用于命中检测，如「重置缩放」按钮）。
+ */
+data class ChartRect(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float
+) {
+    fun contains(x: Float, y: Float): Boolean =
+        x >= left && x <= right && y >= top && y <= bottom
+}
+
+/**
  * Y 轴值域与步长。
  */
 data class ValueRange(

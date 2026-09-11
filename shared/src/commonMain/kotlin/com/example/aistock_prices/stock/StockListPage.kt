@@ -71,6 +71,10 @@ internal class StockListPage : BasePager() {
     private var pollTimerRef = ""
     /** AI 问答 Tab 的内联视图引用（设置页返回时刷新配置态） */
     private var chatView: AiChatView? = null
+    /** 列表排序键：""=自选顺序（含置顶优先），"price"=最新价，"changePercent"=涨跌幅，"name"=名称 */
+    private var sortKey by observable("")
+    /** 当前排序是否为升序（价格/涨跌幅默认降序，名称默认升序） */
+    private var sortAsc by observable(false)
 
     // ==================== 首启引导 ====================
     /** 引导根容器引用（convertFrame 换算基准，body 根） */
@@ -972,6 +976,10 @@ internal class StockListPage : BasePager() {
                                 }
                             }
                         }
+                        // ---------- 排序表头（点击切换排序键 / 升降序） ----------
+                        vif({ ctx.quotes.isNotEmpty() }) {
+                            ctx.listHeaderRow().invoke(this)
+                        }
                         vfor({ ctx.quotes }) { item ->
                             ctx.quoteItem(item).invoke(this)
                         }
@@ -1025,8 +1033,7 @@ internal class StockListPage : BasePager() {
         // 1. 缓存优先展示（接口临时失效时页面不空白）
         val cached = StockCache.loadQuotes(sp)
         if (cached.isNotEmpty()) {
-            quotes.clear()
-            quotes.addAll(cached)
+            replaceQuotes(cached)
             loading = false
         }
         // 2. 拉取最新数据
@@ -1037,8 +1044,7 @@ internal class StockListPage : BasePager() {
     private fun fetchQuotes(metas: List<StockMeta>) {
         StockRepository.fetchQuotes(network, metas.map { it.code }) { list ->
             if (list.isNotEmpty()) {
-                quotes.clear()
-                quotes.addAll(list)
+                replaceQuotes(list)
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
             } else if (quotes.isEmpty()) {
@@ -1063,8 +1069,7 @@ internal class StockListPage : BasePager() {
         val metas = Watchlist.stocks(sp)
         StockRepository.fetchQuotes(network, metas.map { it.code }) { list ->
             if (list.isNotEmpty()) {
-                quotes.clear()
-                quotes.addAll(list)
+                replaceQuotes(list)
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
             }
@@ -1084,11 +1089,122 @@ internal class StockListPage : BasePager() {
     private fun resortQuotes() {
         val metas = Watchlist.stocks(sp)
         val byCode = quotes.associateBy { it.code }
-        val reordered = metas.mapNotNull { byCode[it.code] } +
+        val base = metas.mapNotNull { byCode[it.code] } +
                 quotes.filter { it.code !in metas.map { m -> m.code } }
-        if (reordered.size == quotes.size) {
-            quotes.clear()
-            quotes.addAll(reordered)
+        if (base.size == quotes.size) {
+            replaceQuotes(base)
+        }
+    }
+
+    // ==================== 排序（v1.9.28「探」层） ====================
+
+    /**
+     * 按当前排序键重排并写回列表。
+     * 规则：置顶项永远排在最前（内部保持自选顺序），其余按排序键排。
+     */
+    private fun replaceQuotes(list: List<StockQuote>) {
+        val snapshot = list.toList() // 先拷贝再 clear，避免遍历 observableList 时修改自身
+        val pinned = snapshot.filter { Watchlist.isPinned(sp, it.code) }
+        val rest = snapshot.filter { !Watchlist.isPinned(sp, it.code) }
+        val sortedRest = when (sortKey) {
+            "price" -> order(rest) { it.price }
+            "changePercent" -> order(rest) { it.changePercent }
+            "name" -> order(rest) { it.name }
+            else -> rest
+        }
+        quotes.clear()
+        quotes.addAll(pinned + sortedRest)
+    }
+
+    private fun <T : Comparable<T>> order(list: List<StockQuote>, selector: (StockQuote) -> T): List<StockQuote> {
+        val asc = list.sortedBy(selector)
+        return if (sortAsc) asc else asc.reversed()
+    }
+
+    /** 点击表头：同键切换升降序，换键则用该键的默认方向（名称升序、数值降序） */
+    private fun toggleSort(key: String) {
+        if (sortKey == key) {
+            sortAsc = !sortAsc
+        } else {
+            sortKey = key
+            sortAsc = (key == "name")
+        }
+        replaceQuotes(quotes.toList())
+    }
+
+    /** 排序表头行：列宽与行情行严格一致（flex + 80f + 10f + 110f） */
+    private fun listHeaderRow(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    height(34f)
+                    paddingLeft(16f)
+                    paddingRight(16f)
+                    backgroundColor(ctx.pal.card)
+                }
+                ctx.sortCell("名称/代码", "name", flex = true).invoke(this)
+                ctx.sortCell("最新价", "price", width = 80f, end = true).invoke(this)
+                View {
+                    attr {
+                        width(10f)
+                        height(1f)
+                    }
+                }
+                ctx.sortCell("涨跌幅", "changePercent", width = 110f, center = true).invoke(this)
+            }
+            View {
+                attr {
+                    height(1f)
+                    backgroundColor(ctx.pal.divider)
+                }
+            }
+        }
+    }
+
+    /**
+     * 单个可点击表头单元。
+     * 注意：Text 自身不接收手势，事件挂在外层 View 上，且必须给显式 height 才有热区。
+     */
+    private fun sortCell(
+        label: String,
+        key: String,
+        width: Float = 0f,
+        flex: Boolean = false,
+        end: Boolean = false,
+        center: Boolean = false
+    ): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    if (flex) flex(1f) else width(width)
+                    height(34f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    if (center) {
+                        justifyContentCenter()
+                    } else if (end) {
+                        justifyContentFlexEnd()
+                    } else {
+                        justifyContentFlexStart()
+                    }
+                }
+                Text {
+                    attr {
+                        val active = ctx.sortKey == key
+                        text(if (active) "$label ${if (ctx.sortAsc) "↑" else "↓"}" else label)
+                        fontSize(12f)
+                        color(if (active) ctx.pal.accent else ctx.pal.textSub)
+                        if (center) textAlignCenter() else if (end) textAlignRight() else textAlignLeft()
+                    }
+                }
+                event {
+                    click { ctx.toggleSort(key) }
+                }
+            }
         }
     }
 

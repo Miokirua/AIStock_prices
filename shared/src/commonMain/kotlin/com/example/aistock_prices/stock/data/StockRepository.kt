@@ -146,7 +146,9 @@ object StockRepository {
         val close = item.optString(2)?.toDoubleOrNull() ?: return null
         val high = item.optString(3)?.toDoubleOrNull() ?: return null
         val low = item.optString(4)?.toDoubleOrNull() ?: return null
-        val volume = item.optString(5)?.toLongOrNull() ?: 0L
+        // ⚠️ 历史 K 线的成交量是浮点字符串（如 "622186.000"），只有当日那根是整数串。
+        // 用 toLongOrNull() 会让除当日外的所有量都变成 0（K 线量能副图空白）。
+        val volume = item.optString(5)?.toDoubleOrNull()?.toLong() ?: 0L
         return KLineBar(date, open, close, high, low, volume)
     }
 }

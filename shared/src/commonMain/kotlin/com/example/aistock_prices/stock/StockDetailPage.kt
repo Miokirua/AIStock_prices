@@ -727,14 +727,33 @@ internal class StockDetailPage : BasePager() {
                     paddingTop(14f)
                     paddingBottom(10f)
                 }
-                Text {
+                View {
                     attr {
-                        text("日K线")
-                        fontSize(15f)
-                        fontWeightSemiBold()
-                        color(ctx.pal.textMain)
-                        marginLeft(16f)
+                        flexDirectionRow()
+                        alignItemsCenter()
                         marginBottom(6f)
+                    }
+                    Text {
+                        attr {
+                            text("日K线")
+                            fontSize(15f)
+                            fontWeightSemiBold()
+                            color(ctx.pal.textMain)
+                            marginLeft(16f)
+                        }
+                    }
+                    View {
+                        attr {
+                            flex(1f)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("双指缩放 · 长按读数")
+                            fontSize(11f)
+                            color(ctx.pal.textSub)
+                            marginRight(16f)
+                        }
                     }
                 }
                 vif({ ctx.klineBars.size > 1 }) {
@@ -744,6 +763,17 @@ internal class StockDetailPage : BasePager() {
                         attr {
                             width(width)
                             height(260f)
+                            // 启用「探」层交互：可见窗口缩放/平移 + 十字光标读数。
+                            // xLabelAt 必须给，否则缩放后 X 轴刻度仍是全量生成的、会错位。
+                            interactive = true
+                            minVisibleCount = 12
+                            xLabelAt = { i ->
+                                val d = kData.getOrNull(i)?.date ?: ""
+                                if (d.length >= 10) d.substring(5, 10) else d
+                            }
+                            crosshairColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF8A8F99)
+                            crosshairPanelBg = if (ctx.isNightMode()) Color(0xE6303641) else Color(0xD91F2937)
+                            hintTextColor = if (ctx.isNightMode()) Color(0xFF98A2B3) else Color(0xFF999999)
                             bars = kData.map {
                                 CandleData(
                                     date = it.date,
