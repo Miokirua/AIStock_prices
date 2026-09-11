@@ -2,6 +2,7 @@ package com.example.aistock_prices.stock
 
 import com.example.aistock_prices.RouterNavBar
 import com.example.aistock_prices.base.BasePager
+import com.example.aistock_prices.base.BridgeModule
 import com.example.aistock_prices.base.bridgeModule
 import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ai.AiAnalysisResult
@@ -397,6 +398,13 @@ internal class StockDetailPage : BasePager() {
     }
 
     /** 报价区 */
+    /** 长按复制股票代码（三端宿主已实现 copyToPasteboard，业务层此前未调用） */
+    private fun copyCode(code: String) {
+        if (code.isBlank()) return
+        getPager().acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).copyToPasteboard(code)
+        bridgeModule.toast("已复制 $code")
+    }
+
     private fun quoteHeader(): ViewBuilder {
         val ctx = this
         return {
@@ -425,12 +433,24 @@ internal class StockDetailPage : BasePager() {
                                 color(ctx.pal.textMain)
                             }
                         }
-                        Text {
+                        // 代码文本包在 View 里再绑事件：Text 自身不接收手势，直接挂在 Text 上真机点不动；
+                        // 且热区必须用显式尺寸撑开——仅靠 padding 时真机点不中（同为 Kuikly 命中测试特性）
+                        View {
                             attr {
-                                text(q.symbol)
-                                fontSize(13f)
-                                color(ctx.pal.textSub)
-                                marginRight(10f)
+                                width(104f)
+                                height(36f)
+                                allCenter()
+                                marginRight(6f)
+                            }
+                            Text {
+                                attr {
+                                    text(q.symbol)
+                                    fontSize(13f)
+                                    color(ctx.pal.textSub)
+                                }
+                            }
+                            event {
+                                click { ctx.copyCode(q.symbol) }
                             }
                         }
                         View {

@@ -1,6 +1,7 @@
 package com.example.aistock_prices.stock.ai
 
 import com.example.aistock_prices.base.BasePager
+import com.example.aistock_prices.base.BridgeModule
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
 import com.example.aistock_prices.stock.ui.StockFormat
@@ -22,7 +23,6 @@ import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.layout.FlexAlign
 import com.tencent.kuikly.core.layout.FlexJustifyContent
-import com.tencent.kuikly.core.layout.Frame
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
@@ -91,6 +91,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var quoteTick by observable(0)
     /** 外部刷新信号（如从设置页返回）：自增触发 body 重跑，重新求值 isConfigured() 等 SP 依赖 */
     private var refreshTick by observable(0)
+    /** 引用追问：被引用消息的 ts（null=无引用）。发送时其正文作为上下文拼入提问 */
+    private var quoteMsgTs by observable<Long?>(null)
+    /**
+     * 快捷问句 chips 文案。必须走 observableList + vfor：
+     * 若在 ViewBuilder 里用普通 for 展开，文案只在构建期求值一次，
+     * 会话切换（拿到/失去股票上下文）后不会刷新。
+     */
+    private var chipList by observableList<String>()
 
     private var chatInputRef: ViewRef<InputView>? = null
     /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
@@ -132,6 +140,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         // 修复：activeId 在上述赋值后才确定，必须再同步一次消息列表（vfor 数据源 activeMsgs），
         // 否则恢复选中会话后消息区为空（需手动重新点一次会话才显示历史记录）
         syncActiveMsgs()
+        // 同理：chips 文案依赖当前会话是否绑定股票，activeId 确定后须重算，
+        // 否则首屏会停留在"无上下文"的通用问句
+        refreshChips()
         // 进入页面：等列表布局完成后滚动到底端
         scrollToBottom(animated = false)
     }
@@ -164,6 +175,22 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 // 延迟到视图树稳定后再发问
                 setTimeout(pagerId, 150) { doSend(prompt) }
             }
+        }
+    }
+
+    /**
+     * 从结果详情页「继续追问」进入：切到指定会话，并将指定消息设为引用上下文
+     * （引用条显示在输入区上方，发送时其正文作为上下文一并提交）。
+     */
+    fun initForConversation(convId: String, quoteTs: Long) {
+        cancelIfSending()
+        val conv = ConversationStore.load(sp).firstOrNull { it.id == convId } ?: return
+        activeId = conv.id
+        sp.setItem(KEY_ACTIVE_ID, conv.id)
+        reloadConversations()
+        scrollToBottom(animated = false)
+        if (quoteTs > 0L && conv.messages.any { it.ts == quoteTs }) {
+            quoteMsgTs = quoteTs
         }
     }
 
@@ -246,6 +273,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             velse {
                 ctx.guideCard().invoke(this)
             }
+            // ---------- 快捷问句 chips ----------
+            vif({ ctx.isConfigured() }) {
+                ctx.quickChips().invoke(this)
+            }
+            // ---------- 引用追问提示条（AI 消息点"继续追问"后显示，紧贴输入框上方） ----------
+            vif({ ctx.quoteMsgTs != null }) {
+                ctx.quoteBanner().invoke(this)
+            }
             // ---------- 输入区 ----------
             vif({ ctx.isConfigured() }) {
                 ctx.inputBar().invoke(this)
@@ -288,17 +323,26 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         val pendingMsg = ctx.activeMsgs.firstOrNull { it.ts == ctx.pendingMenuMsgTs }
                         if (pendingMsg != null) {
                             if (pendingMsg.role == "user") {
-                                // 用户消息：修改（铅笔）、删除（垃圾桶）
+                                // 用户消息：修改（铅笔）、复制、删除（垃圾桶）
                                 ctx.menuItem("✏️", "修改", ctx.pal.accent) {
                                     ctx.startEditUserMessage(pendingMsg.ts)
+                                }.invoke(this)
+                                ctx.menuItem("📋", "复制", ctx.pal.textMain) {
+                                    ctx.copyMessageText(pendingMsg.content)
                                 }.invoke(this)
                                 ctx.menuItem("🗑️", "删除", ctx.pal.up) {
                                     ctx.deleteMessage(pendingMsg.ts)
                                 }.invoke(this)
                             } else {
-                                // AI 消息：重新生成（循环）、删除（垃圾桶）
+                                // AI 消息：继续追问（引用）、重新生成（循环）、复制、删除（垃圾桶）
+                                ctx.menuItem("💬", "继续追问", ctx.pal.accent) {
+                                    ctx.startQuote(pendingMsg.ts)
+                                }.invoke(this)
                                 ctx.menuItem("🔄", "重新生成", ctx.pal.accent) {
                                     ctx.regenerateMessage(pendingMsg.ts)
+                                }.invoke(this)
+                                ctx.menuItem("📋", "复制", ctx.pal.textMain) {
+                                    ctx.copyMessageText(pendingMsg.content)
                                 }.invoke(this)
                                 ctx.menuItem("🗑️", "删除", ctx.pal.up) {
                                     ctx.deleteMessage(pendingMsg.ts)
@@ -724,10 +768,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     View {
                         ref { ctx.menuTriggerRefs[msg.ts] = it }
                         attr {
-                            paddingLeft(8f)
-                            paddingRight(8f)
-                            paddingTop(3f)
-                            paddingBottom(3f)
+                            // 显式尺寸：仅靠 padding 撑开的热区过小（约 31×24dp），真机上常点不中
+                            width(44f)
+                            height(34f)
+                            allCenter()
                         }
                         Text {
                             attr {
@@ -1123,6 +1167,135 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         }
     }
 
+    // ==================== 快捷问句 chips ====================
+
+    /**
+     * 输入框上方的快捷问句：内容随上下文变化——
+     * 当前会话绑定了股票时给出该股的常用分析维度；否则给出通用问题。
+     * 点击仅填入输入框（不直接发送），保留用户二次编辑的机会。
+     */
+    private fun quickChips(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(10f)
+                    paddingRight(10f)
+                    paddingTop(6f)
+                    paddingBottom(6f)
+                    backgroundColor(ctx.pal.card)
+                }
+                vfor({ ctx.chipList }) { label ->
+                    View {
+                        attr {
+                            flex(1f)
+                            marginLeft(3f)
+                            marginRight(3f)
+                            height(28f)
+                            borderRadius(14f)
+                            backgroundColor(ctx.pal.chipBg)
+                            allCenter()
+                        }
+                        Text {
+                            attr {
+                                text(label)
+                                fontSize(12f)
+                                color(ctx.pal.textMain)
+                            }
+                        }
+                        event {
+                            click { ctx.applyChip(label) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 刷新 chips 文案：会话绑定股票 → 分析维度；否则 → 通用问题。会话变化后必须调用 */
+    private fun refreshChips() {
+        val conv = activeConv()
+        val labels = if (conv?.stockCode != null) {
+            listOf("基本面", "技术面", "资金面", "风险提示")
+        } else {
+            listOf("大盘走势", "选股思路", "术语解释", "操作策略")
+        }
+        if (chipList.size == labels.size && labels.indices.all { chipList[it] == labels[it] }) return
+        chipList.clear()
+        chipList.addAll(labels)
+    }
+
+    /** 点击 chip：把对应问题填入输入框（不自动发送） */
+    private fun applyChip(label: String) {
+        val conv = activeConv()
+        val code = conv?.stockCode
+        val text = if (code != null) {
+            val name = conv.stockName?.takeIf { it.isNotBlank() } ?: code
+            // 文案尽量短：过长时输入框会把开头滚出可视区，用户看不到完整问题
+            if (label == "风险提示") "$name（$code）有哪些风险点"
+            else "$name（$code）的${label}"
+        } else {
+            when (label) {
+                "大盘走势" -> "今天 A 股大盘整体走势如何？"
+                "选股思路" -> "当前市场环境下，选股应该重点关注哪些指标？"
+                "术语解释" -> "请解释一下市盈率、市净率和换手率分别代表什么"
+                else -> "震荡行情下常见的操作策略有哪些？"
+            }
+        }
+        inputText = text
+        chatInputRef?.view?.setText(text)
+    }
+
+    // ==================== 引用追问提示条 ====================
+
+    /** AI 消息点「继续追问」后显示在输入区上方的提示条：展示被引用内容节选，可点取消 */
+    private fun quoteBanner(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(14f)
+                    paddingRight(8f)
+                    paddingTop(8f)
+                    paddingBottom(8f)
+                    backgroundColor(ctx.pal.accentChipBg)
+                    border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text("💬 引用：" + ctx.quotedPreview())
+                        fontSize(12f)
+                        color(ctx.pal.textMain)
+                        lineHeight(18f)
+                    }
+                }
+                View {
+                    attr {
+                        paddingLeft(10f)
+                        paddingRight(10f)
+                        paddingTop(4f)
+                        paddingBottom(4f)
+                    }
+                    Text {
+                        attr {
+                            text("取消")
+                            fontSize(12f)
+                            color(ctx.pal.accent)
+                        }
+                    }
+                    event {
+                        click { ctx.cancelQuote() }
+                    }
+                }
+            }
+        }
+    }
+
     // ==================== 未配置引导 ====================
 
     private fun guideCard(): ViewBuilder {
@@ -1318,7 +1491,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         pendingMenuMsgTs = null
         setTimeout(pagerId, 50) {
             if (pendingMenuMsgTs != null) return@setTimeout // 期间菜单已被打开（先执行者生效），放弃本次
-            if (!applyMenuCardPos(ts)) {
+            val posOk = applyMenuCardPos(ts)
+            if (!posOk) {
                 // 按钮/容器定位失败（视图未就绪）：兜底屏幕中上部，保证菜单可见可点
                 menuCardX = 24f
                 menuCardY = 120f
@@ -1334,39 +1508,37 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
 
     /**
      * 计算菜单卡片坐标并写入 [menuCardX]/[menuCardY]。
-     * @return true=定位成功；false=按钮/容器未就绪（调用方需兜底坐标）。
+     *
+     * 不按触发按钮定位，而是「横向贴边 + 纵向固定」，原因有二（均为真机实测）：
+     * 1. `convertFrame` 对 Scroller 内容流内的子视图给出的坐标基准不稳定——实测按钮在 root 内
+     *    约 (430, 184)dp，换算只得到 (301, 120)dp，偏差百 dp 级，贴合不上；
+     * 2. `scrollToBottom` 用 100000f 滚到底，部分平台会把该设定值原样回读
+     *    （实测 contentViewOffsetY = 100000.0），一旦参与相减按钮 Y 变成 -99879，
+     *    「下方空间是否足够」对负数恒真 → 菜单被定位到屏幕外，完全不可见。
+     *
+     * 固定位置虽然不贴着按钮，但保证菜单始终落在可视区内、可点可选。
+     *
+     * @return true=定位成功；false=根容器未就绪（调用方需兜底坐标）。
      */
     private fun applyMenuCardPos(ts: Long): Boolean {
         val root = rootContainerRef ?: return false
-        val trigger = menuTriggerRefs[ts]?.view ?: return false
-        val pageFrame = trigger.convertFrame(Frame(0f, 0f, 0f, 0f), root)
-        val scrollY = chatScrollerRef?.view?.contentViewOffsetY ?: 0f
-        val btnX = pageFrame.x
-        val btnY = pageFrame.y - scrollY
-        val btnW = 36f // ⋮ 按钮估算宽
-        val btnH = 30f // ⋮ 按钮估算高
-        val cardW = 132f
-        val cardH = 100f
+        // 菜单行数：用户消息 3 行（修改/复制/删除），AI 消息 4 行（追问/重新生成/复制/删除）
+        val isUser = activeMsgs.firstOrNull { it.ts == ts }?.role == "user"
+        val cardW = 140f
+        val cardH = (if (isUser) 3 else 4) * 40f + 12f
         // 边界基准用 AiChatView 根容器实际尺寸（frame 布局尺寸），而非 pageViewWidth/Height——
-        // 独立页导航栏 / 首页 Tab 栏会压缩可视区域，用页面高度判断会让最末端消息的菜单
-        // 放下方时超出可视区，被底部栏遮挡
+        // 独立页导航栏 / 首页 Tab 栏会压缩可视区域，用页面高度判断会让菜单落到被遮挡的区域
         val effW = root.frame.width.takeIf { it > 0f } ?: pagerData.pageViewWidth
         val effH = root.frame.height.takeIf { it > 0f } ?: pagerData.pageViewHeight
-        // 对齐方向跟随消息角色：用户消息 ⋮ 在右 → 卡片右缘对齐按钮右缘（向左展开）；
-        // AI 消息 ⋮ 在左 → 卡片左缘对齐按钮左缘（向右展开）
-        val isUser = activeMsgs.firstOrNull { it.ts == ts }?.role == "user"
-        val maxLeft = (effW - cardW - 8f).coerceAtLeast(8f)
+        // 横向跟随消息角色贴边：用户消息菜单靠右，AI 消息菜单靠左
         menuCardX = if (isUser) {
-            (btnX + btnW - cardW).coerceIn(8f, maxLeft)
+            (effW - cardW - 12f).coerceAtLeast(8f)
         } else {
-            btnX.coerceIn(8f, maxLeft)
+            12f
         }
-        // 垂直：优先按钮下方；下方空间不足（底部输入栏/菜单栏遮挡）则向上弹出
-        menuCardY = if (btnY + btnH + cardH + 12f <= effH) {
-            btnY + btnH + 6f
-        } else {
-            (btnY - cardH - 6f).coerceAtLeast(8f)
-        }
+        // 纵向固定在消息区上部的 18% 处，并双重钳制保证整张卡片落在可视区内
+        val maxTop = (effH - cardH - 12f).coerceAtLeast(12f)
+        menuCardY = (effH * 0.18f).coerceIn(12f, maxTop)
         return true
     }
 
@@ -1434,6 +1606,14 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         pendingMenuMsgTs = null
         chatInputRef?.view?.setText("")
         inputText = ""
+        // 引用追问：被引用的消息正文作为上下文拼进本次提问，发送后立即退出引用态
+        val quoted = quoteMsgTs?.let { ts -> activeMsgs.firstOrNull { it.ts == ts } }
+        quoteMsgTs = null
+        val finalText = if (quoted != null && quoted.content.isNotBlank()) {
+            "【引用上文】\n${stripContextSuffix(quoted.content)}\n\n【我的问题】\n$text"
+        } else {
+            text
+        }
         // 数据上下文仅对紧邻的提问有效：保留会话末尾刚注入的 context（K线追问），
         // 移除更早遗留的 context，避免旧的选中 bar 数据干扰后续自由提问
         val baseMsgs = conv.messages
@@ -1443,9 +1623,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         } else {
             baseMsgs.filter { it.role != ChatMessage.ROLE_CONTEXT }
         }
-        // 追加 user 消息并刷新标题（用最新发问的前 14 字作为标题）
+        // 追加 user 消息并刷新标题（用最新发问的前 14 字作为标题；引用块不计入标题）
         val updated = conv.copy(
-            messages = trimmed + ChatMessage("user", text, DateTime.currentTimestamp()),
+            messages = trimmed + ChatMessage("user", finalText, DateTime.currentTimestamp()),
             title = deriveTitle(text)
         )
         ConversationStore.update(sp, updated)
@@ -1632,6 +1812,41 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         conversations.clear()
         conversations.addAll(ConversationStore.load(sp))
         syncActiveMsgs()
+        refreshChips()
+    }
+
+    /** 复制文本到系统剪贴板（三端宿主已实现 copyToPasteboard，业务层此前从未调用） */
+    private fun copyMessageText(content: String) {
+        pendingMenuMsgTs = null // 点完就收起菜单，与删除/重新生成一致
+        val text = stripContextSuffix(content).trim()
+        if (text.isEmpty()) {
+            bridgeToast("内容为空")
+            return
+        }
+        getPager().acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).copyToPasteboard(text)
+        bridgeToast("已复制")
+    }
+
+    /** 进入引用追问态：把该条消息作为上下文，下次发送时一并提交 */
+    private fun startQuote(ts: Long) {
+        quoteMsgTs = ts
+        pendingMenuMsgTs = null
+    }
+
+    private fun cancelQuote() {
+        quoteMsgTs = null
+    }
+
+    /** 引用条展示的正文节选（前 40 字；去 Markdown 标记与空白，避免预览里满是 # 与 >） */
+    private fun quotedPreview(): String {
+        val ts = quoteMsgTs ?: return ""
+        val content = activeMsgs.firstOrNull { it.ts == ts }?.content ?: return ""
+        val flat = stripContextSuffix(content)
+            .replace(Regex("(?m)^[#>*+\\-\\s]+"), "") // 行首 Markdown 标记
+            .replace(Regex("[*`_]{1,3}"), "")        // 强调/代码标记
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return if (flat.length <= 40) flat else flat.substring(0, 40) + "…"
     }
 
     private fun bridgeToast(msg: String) {

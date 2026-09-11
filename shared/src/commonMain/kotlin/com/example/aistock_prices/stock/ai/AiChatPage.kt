@@ -52,6 +52,13 @@ internal class AiChatPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         val code = pagerData.params.optString("code")
+        val convId = pagerData.params.optString("convId")
+        // 结果详情页「继续追问」：按会话 id 切换 + 预置引用态，与股票维度入口互斥
+        if (convId.isNotBlank()) {
+            val quoteTs = pagerData.params.optLong("quoteTs") ?: 0L
+            setTimeout(200) { chatView?.initForConversation(convId, quoteTs) }
+            return
+        }
         val name = pagerData.params.optString("name", "该股票")
         val question = pagerData.params.optString("question").takeIf { it.isNotBlank() }
         if (code.isNotBlank()) {
@@ -73,7 +80,10 @@ internal class AiChatPage : BasePager() {
                         barVolume = pagerData.params.optLong("barVolume", 0L)
                     )
                 } else {
-                    chatView?.initForStock(code, name, autoSend = true, question = question)
+                    // autoSend=0：只切到该股会话、不自动发问（如自选股列表左滑「问 AI」），
+                    // 由输入框上方的快捷问句接手，避免一进页面就消耗 token
+                    val autoSend = pagerData.params.optString("autoSend", "1") != "0"
+                    chatView?.initForStock(code, name, autoSend = autoSend, question = question)
                 }
             }
         }

@@ -17,7 +17,9 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.NetworkModule
+import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.ActivityIndicator
@@ -122,6 +124,27 @@ internal class ResultDetailPage : BasePager() {
                             }
                             KuiklyMarkdown(content = ctx.content, config = markdownConfig(ctx.isNightMode()))
                         }
+                        // 继续追问：回到 AI 问答页并把本条分析设为引用上下文
+                        View {
+                            attr {
+                                marginTop(18f)
+                                height(40f)
+                                borderRadius(20f)
+                                allCenter()
+                                backgroundColor(ctx.pal.accent)
+                            }
+                            Text {
+                                attr {
+                                    text("💬 就这条继续追问")
+                                    fontSize(14f)
+                                    color(ctx.pal.onAccent)
+                                    fontWeightSemiBold()
+                                }
+                            }
+                            event {
+                                click { ctx.askFollowUp() }
+                            }
+                        }
                     }
                     View {
                         attr {
@@ -136,6 +159,15 @@ internal class ResultDetailPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         loadResult()
+    }
+
+    /** 就本条分析继续追问：回 AI 问答页，切到该会话并把本条设为引用上下文 */
+    private fun askFollowUp() {
+        val pageData = JSONObject().apply {
+            put("convId", convId)
+            put("quoteTs", msgTs)
+        }
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }
 
     private fun loadResult() {

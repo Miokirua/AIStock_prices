@@ -97,7 +97,8 @@ internal class StockListPage : BasePager() {
     private var menuGuideRef: ViewRef<DivView>? = null
 
     /** 左滑操作条宽度（置顶 72f + 删除 72f） */
-    private val actionWidth = 144f
+    /** 左滑操作条总宽：置顶 / 问 AI / 删除 三等分（每项约 68dp） */
+    private val actionWidth = 204f
     /** 手势方向判定阈值（dp），超过才认定是水平/垂直手势 */
     private val swipeSlop = 8f
     /** 每次左滑手势结束后屏蔽点击进详情的时间窗口（ms） */
@@ -1179,6 +1180,25 @@ internal class StockListPage : BasePager() {
                             click { ctx.onSwipePin(quote) }
                         }
                     }
+                    // 问 AI：带上该股上下文进 AI 问答页
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(Color(0xFF378ADD))
+                        }
+                        Text {
+                            attr {
+                                text("问 AI")
+                                fontSize(13f)
+                                color(ctx.pal.onAccent)
+                                fontWeightSemiBold()
+                            }
+                        }
+                        event {
+                            click { ctx.onSwipeAskAi(quote) }
+                        }
+                    }
                     // 删除
                     View {
                         attr {
@@ -1417,6 +1437,17 @@ internal class StockListPage : BasePager() {
     private fun onSwipeDelete(quote: StockQuote) {
         swipeStates[quote.code]?.offset = 0f
         pendingRemove = quote
+    }
+
+    /** 左滑操作条：问 AI（带上该股上下文进入 AI 问答页，并复位该行） */
+    private fun onSwipeAskAi(quote: StockQuote) {
+        swipeStates[quote.code]?.offset = 0f
+        val pageData = JSONObject().apply {
+            put("code", quote.code)
+            put("name", quote.name)
+            put("autoSend", "0") // 只切到该股会话，等用户点快捷问句或自行输入
+        }
+        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_chat", pageData)
     }
 
     /** 跳转个股详情 */
