@@ -220,6 +220,29 @@ object Watchlist {
         return true
     }
 
+    /**
+     * 调整 [name] 在分组数组中的位置（数组顺序即 chips 显示顺序）。
+     * [delta] 只接受 -1（上移）/ +1（下移）；越界或分组不存在时返回 false，不改数据。
+     */
+    fun moveGroup(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        name: String,
+        delta: Int
+    ): Boolean {
+        if (delta != -1 && delta != 1) return false
+        val list = groups(sp)
+        val i = list.indexOf(name)
+        if (i < 0) return false
+        val j = i + delta
+        if (j < 0 || j >= list.size) return false
+        val swapped = list.toMutableList()
+        val tmp = swapped[i]
+        swapped[i] = swapped[j]
+        swapped[j] = tmp
+        saveGroups(sp, swapped)
+        return true
+    }
+
     /** 统计各分组的股票数（key 为空串表示未分组），供 chip 上显示数量 */
     fun groupCounts(sp: com.tencent.kuikly.core.module.SharedPreferencesModule): Map<String, Int> {
         return stocks(sp).groupingBy { it.group }.eachCount()

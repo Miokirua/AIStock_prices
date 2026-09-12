@@ -27,6 +27,7 @@ import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.layout.Frame
 import com.tencent.kuikly.core.directives.velse
 import com.tencent.kuikly.core.directives.vfor
+import com.tencent.kuikly.core.directives.vforIndex
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.module.RouterModule
@@ -96,6 +97,8 @@ internal class StockListPage : BasePager() {
     private var moveSheetQuote by observable<StockQuote?>(null)
     /** 分组 chip 长按菜单：当前操作的分组名（null = 不显示） */
     private var groupMenuName by observable<String?>(null)
+    /** 分组排序浮层是否显示（v1.9.33，从分组长按菜单进入） */
+    private var showGroupSort by observable(false)
     /** 待删除的分组（二次确认用，null = 不显示） */
     private var pendingGroupDelete by observable<String?>(null)
     /** 新建 / 重命名分组弹窗 */
@@ -738,6 +741,9 @@ internal class StockListPage : BasePager() {
             }
             vif({ ctx.pendingGroupDelete != null }) {
                 ctx.deleteGroupConfirm().invoke(this)
+            }
+            vif({ ctx.showGroupSort }) {
+                ctx.groupSortSheet().invoke(this)
             }
 
             // ---------- 首启引导：询问弹窗 ----------
@@ -1688,6 +1694,13 @@ internal class StockListPage : BasePager() {
                                 }
                             }
                             ctx.groupMenuRow("重命名") { ctx.openGroupDialog(name) }.invoke(this)
+                            // 分组排序：至少 2 个分组才有排序意义（v1.9.33）
+                            if (ctx.groupNames.size >= 2) {
+                                ctx.groupMenuRow("分组排序") {
+                                    ctx.groupMenuName = null
+                                    ctx.showGroupSort = true
+                                }.invoke(this)
+                            }
                             // ⚠️ 选「删除」时必须先关掉菜单：否则菜单与二次确认同时存在，
                             // 确认框关闭后会残留一个指向已删分组的菜单
                             ctx.groupMenuRow("删除", danger = true) {
@@ -1727,6 +1740,158 @@ internal class StockListPage : BasePager() {
                 }
                 event {
                     click { onClick() }
+                }
+            }
+        }
+    }
+
+    /** 分组排序里点 ↑↓：改持久化顺序，下一帧刷新 chips 行与浮层行 */
+    private fun moveSortGroup(name: String, delta: Int) {
+        if (!Watchlist.moveGroup(sp, name, delta)) return
+        // ⚠️ reloadGroups 会 clear+addAll groupNames；排序浮层的 vfor 正在遍历它，
+        // 必须延迟到下一帧再重建，否则「遍历中修改列表」会崩溃
+        setTimeout(16) { reloadGroups() }
+    }
+
+    /** 分组排序浮层：列出所有分组，每行 ↑/↓ 调整显示顺序（v1.9.33） */
+    private fun groupSortSheet(): ViewBuilder {
+        val ctx = this
+        return {
+            Modal {
+                View {
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        backgroundColor(ctx.pal.maskFull)
+                    }
+                    event { click { ctx.showGroupSort = false } }
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 96f)
+                            borderRadius(14f)
+                            backgroundColor(ctx.pal.card)
+                            paddingTop(16f)
+                            paddingBottom(10f)
+                            flexDirectionColumn()
+                            overflow(true)
+                        }
+                        event { click { } }
+                        Text {
+                            attr {
+                                text("分组排序")
+                                fontSize(16f)
+                                fontWeightSemiBold()
+                                color(ctx.pal.textMain)
+                                marginLeft(20f)
+                                marginRight(20f)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text("用右侧箭头调整分组在列表里的显示顺序")
+                                fontSize(12f)
+                                color(ctx.pal.textSub)
+                                marginLeft(20f)
+                                marginRight(20f)
+                                marginTop(4f)
+                                marginBottom(10f)
+                            }
+                        }
+                        // 分组行（vforIndex 拿到 index/count 判断首尾禁用）。
+                        // 组多时高度封顶并纵向滚动，避免卡片溢出屏幕（12 组 × 48dp = 576dp）。
+                        Scroller {
+                            attr {
+                                height((ctx.groupNames.size * 48f).coerceAtMost(336f))
+                                showScrollerIndicator(false)
+                                flexDirectionColumn()
+                            }
+                            vforIndex({ ctx.groupNames }) { name, index, count ->
+                                ctx.groupSortRow(name, index, count).invoke(this)
+                            }
+                        }
+                        // 完成
+                        View {
+                            attr {
+                                height(44f)
+                                borderRadius(22f)
+                                allCenter()
+                                backgroundColor(ctx.pal.accent)
+                                marginLeft(20f)
+                                marginRight(20f)
+                                marginTop(10f)
+                            }
+                            Text {
+                                attr {
+                                    text("完成")
+                                    fontSize(14f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.onAccent)
+                                }
+                            }
+                            event { click { ctx.showGroupSort = false } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 分组排序浮层的单行：名称 + 数量 + ↑↓ */
+    private fun groupSortRow(name: String, index: Int, count: Int): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    height(48f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(20f)
+                    paddingRight(12f)
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text(name)
+                        fontSize(15f)
+                        color(ctx.pal.textMain)
+                    }
+                }
+                Text {
+                    attr {
+                        text("${ctx.countOf(name)} 只")
+                        fontSize(12f)
+                        color(ctx.pal.textSub)
+                        marginRight(14f)
+                    }
+                }
+                ctx.sortArrow("↑", index > 0) { ctx.moveSortGroup(name, -1) }.invoke(this)
+                ctx.sortArrow("↓", index < count - 1) { ctx.moveSortGroup(name, 1) }.invoke(this)
+            }
+        }
+    }
+
+    /** 排序浮层里的单个方向箭头按钮；禁用时灰色且点击不响应 */
+    private fun sortArrow(glyph: String, enabled: Boolean, onClick: () -> Unit): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    width(40f)
+                    height(40f)
+                    borderRadius(8f)
+                    allCenter()
+                    marginLeft(6f)
+                    backgroundColor(ctx.pal.chipBg)
+                }
+                Text {
+                    attr {
+                        text(glyph)
+                        fontSize(18f)
+                        color(if (enabled) ctx.pal.textMain else ctx.pal.textSub)
+                    }
+                }
+                event {
+                    click { if (enabled) onClick() }
                 }
             }
         }
