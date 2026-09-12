@@ -19,7 +19,9 @@ import com.example.aistock_prices.stock.data.MinutePoint
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
+import com.example.aistock_prices.stock.ui.FeatureTips
 import com.example.aistock_prices.stock.ui.StockFormat
+import com.example.aistock_prices.stock.ui.featureTipBar
 import com.example.aistock_prices.stock.ui.markdownConfig
 import com.example.kuiklychart.chart.base.CandleData
 import com.example.kuiklychart.chart.base.ChartDataPoint
@@ -89,6 +91,8 @@ internal class StockDetailPage : BasePager() {
     private var levelPanelOpen by observable(false)
     /** 待标记的价格：从 K 线「＋标记」进来时有值，从标题行入口进来时为 null（用最新价） */
     private var pendingLevelPrice by observable<Double?>(null)
+    /** 就地提示：K 线手势 + 关键位（首次进详情页显示，点「知道了」后不再出现） */
+    private var tipChartVisible by observable(false)
 
     private val stockCode: String get() = pagerData.params.optString("code")
     private val stockName: String get() = pagerData.params.optString("name", "个股详情")
@@ -222,7 +226,14 @@ internal class StockDetailPage : BasePager() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         reloadKeyLevels()
+        tipChartVisible = !FeatureTips.isSeen(sp, FeatureTips.CHART)
         loadDetail()
+    }
+
+    /** 收起 K 线手势提示并写 SP（全局一次性，不看股票代码） */
+    private fun dismissChartTip() {
+        FeatureTips.markSeen(sp, FeatureTips.CHART)
+        tipChartVisible = false
     }
 
     // ==================== 关键位备忘 ====================
@@ -1049,6 +1060,14 @@ internal class StockDetailPage : BasePager() {
                             click { ctx.openLevelPanel(null) }
                         }
                     }
+                }
+                // 就地功能提示：这一块的手势与关键位怎么用（首次进详情页显示，点「知道了」后不再出现）
+                vif({ ctx.tipChartVisible }) {
+                    featureTipBar(
+                        ctx.pal,
+                        "双击放大 K 线、拖动平移、长按读数；点画布「标记最新价」可存成自己的关键位",
+                        { ctx.dismissChartTip() }
+                    ).invoke(this)
                 }
                 vif({ ctx.klineBars.size > 1 }) {
                     val kData = ctx.klineBars

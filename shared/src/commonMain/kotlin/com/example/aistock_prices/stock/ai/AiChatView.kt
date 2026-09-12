@@ -4,9 +4,11 @@ import com.example.aistock_prices.base.BasePager
 import com.example.aistock_prices.base.BridgeModule
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
+import com.example.aistock_prices.stock.ui.FeatureTips
 import com.example.aistock_prices.stock.ui.StockFormat
 import com.example.aistock_prices.stock.ui.ThemePalette
 import com.example.aistock_prices.stock.ui.ThemePalettes
+import com.example.aistock_prices.stock.ui.featureTipBar
 import com.example.aistock_prices.stock.ui.markdownConfig
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -100,6 +102,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
      */
     private var chipList by observableList<String>()
 
+    /** 就地提示：消息长按菜单 / 快捷问句（首次进入显示，点「知道了」后不再出现） */
+    private var tipMsgVisible by observable(false)
+
     private var chatInputRef: ViewRef<InputView>? = null
     /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
@@ -134,6 +139,7 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     override fun viewDidLoad() {
         super.viewDidLoad()
         reloadConversations()
+        tipMsgVisible = !FeatureTips.isSeen(sp, FeatureTips.AI_MSG)
         val saved = sp.getItem(KEY_ACTIVE_ID)
         if (saved.isNotBlank() && conversations.any { it.id == saved }) activeId = saved
         if (activeId.isBlank() && conversations.isNotEmpty()) activeId = conversations.first().id
@@ -145,6 +151,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         refreshChips()
         // 进入页面：等列表布局完成后滚动到底端
         scrollToBottom(animated = false)
+    }
+
+    /** 收起消息操作提示并写 SP（全局一次性，与具体会话无关） */
+    private fun dismissMsgTip() {
+        FeatureTips.markSeen(sp, FeatureTips.AI_MSG)
+        tipMsgVisible = false
     }
 
     /** 消息列表滚动到底端（延迟一拍等内容布局完成；offsetY 传大值由平台 clamp） */
@@ -266,6 +278,15 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
             ctx.refreshTick // 建立响应式依赖：外部 reload() 后整体重跑（重新读取 SP 配置等）
             // ---------- 会话栏 ----------
             ctx.convHeader().invoke(this)
+            // ---------- 就地功能提示：消息能做什么（首次进入显示，点「知道了」后不再出现） ----------
+            // 只在已配置 AI 时显示 —— 未配置时下面展示的是配置引导卡，两套引导不叠加
+            vif({ ctx.isConfigured() && ctx.tipMsgVisible }) {
+                featureTipBar(
+                    ctx.pal,
+                    "长按消息可复制、引用追问、重新生成或删除；上方快捷问句点一下就能发",
+                    { ctx.dismissMsgTip() }
+                ).invoke(this)
+            }
             // ---------- 消息区 / 未配置引导 ----------
             vif({ ctx.isConfigured() }) {
                 ctx.messageList().invoke(this)

@@ -10,8 +10,10 @@ import com.example.aistock_prices.stock.data.StockMeta
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
 import com.example.aistock_prices.stock.data.Watchlist
+import com.example.aistock_prices.stock.ui.FeatureTips
 import com.example.aistock_prices.stock.ui.StockFormat
 import com.example.aistock_prices.stock.ui.ThemeMode
+import com.example.aistock_prices.stock.ui.featureTipBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
@@ -103,12 +105,20 @@ internal class StockListPage : BasePager() {
     private var groupInput by observable("")
     private var groupInputRef: ViewRef<InputView>? = null
 
+    // ==================== 就地功能提示（v1.9.31） ====================
+    /**
+     * 分组条下方的两条一次性提示（见 [FeatureTips]）。
+     * 一次只显示一条：先讲分组，点「知道了」关掉后才轮到排序 —— 两条同时堆着会把列表顶下去。
+     */
+    private var tipGroupVisible by observable(false)
+    private var tipSortVisible by observable(false)
+
     // ==================== 首启引导 ====================
     /** 引导根容器引用（convertFrame 换算基准，body 根） */
     private var guideRootRef: ViewContainer<*, *>? = null
     /** 首启询问弹窗：是否开始功能引导 */
     private var showGuidePrompt by observable(false)
-    /** 引导步骤：0=不显示，1..8=第几步 */
+    /** 引导步骤：0=不显示，1..10=第几步（见 [guideTitleFor] 的步骤表） */
     private var guideStep by observable(0)
     /** 当前高亮孔矩形（相对引导根容器坐标系） */
     private var guideRect by observable(Frame(0f, 0f, 0f, 0f))
@@ -425,6 +435,17 @@ internal class StockListPage : BasePager() {
                                     color(ctx.pal.textMain)
                                 }
                             }
+                            // 引导版本升级后给老用户一个非打扰的提示：菜单里点进来就能重看新内容
+                            vif({ ctx.guideOutdated() }) {
+                                Text {
+                                    attr {
+                                        text("有新内容")
+                                        fontSize(10f)
+                                        color(ctx.pal.accent)
+                                        marginRight(6f)
+                                    }
+                                }
+                            }
                             event {
                                 click {
                                     ctx.showMenu = false
@@ -445,6 +466,22 @@ internal class StockListPage : BasePager() {
                     }
                     // 分组 chips 固定在列表上方（不随列表滚动）
                     ctx.groupChipsRow().invoke(this)
+                    // ---------- 就地功能提示：讲当前这一块怎么用，点「知道了」后不再出现 ----------
+                    // 两条按顺序出现（先分组后排序），避免叠在一起把列表顶下去
+                    vif({ ctx.tipGroupVisible }) {
+                        featureTipBar(
+                            ctx.pal,
+                            "点 ＋ 新建分组；长按股票行可移动到分组，长按分组名可重命名或删除",
+                            { ctx.dismissFeatureTip(FeatureTips.GROUP) }
+                        ).invoke(this)
+                    }
+                    vif({ !ctx.tipGroupVisible && ctx.tipSortVisible }) {
+                        featureTipBar(
+                            ctx.pal,
+                            "点表头可按价格 / 涨跌幅 / 名称排序，再点一次切换升降序；置顶项恒排最前",
+                            { ctx.dismissFeatureTip(FeatureTips.SORT) }
+                        ).invoke(this)
+                    }
                     ctx.listContent().invoke(this)
                 }
             }
@@ -882,6 +919,7 @@ internal class StockListPage : BasePager() {
         menuMode = themeMode
         loadData()
         maybeShowGuidePrompt()
+        reloadFeatureTips()
     }
 
     /**
@@ -2342,6 +2380,23 @@ internal class StockListPage : BasePager() {
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("ai_config", JSONObject())
     }
 
+    // ==================== 就地功能提示（v1.9.31） ====================
+
+    /**
+     * 读取就地提示的显示态：没看过才显示。
+     * 首次安装的「新功能」提示不依赖首启引导是否已读 —— 两者是独立的一次性标记。
+     */
+    private fun reloadFeatureTips() {
+        tipGroupVisible = !FeatureTips.isSeen(sp, FeatureTips.GROUP)
+        tipSortVisible = !FeatureTips.isSeen(sp, FeatureTips.SORT)
+    }
+
+    /** 点「知道了」：写 SP 标记并立即收起（[reloadFeatureTips] 会顺带把下一条推上来） */
+    private fun dismissFeatureTip(key: String) {
+        FeatureTips.markSeen(sp, key)
+        reloadFeatureTips()
+    }
+
     // ==================== 首启引导逻辑 ====================
 
     /** 首启检查：无 guide_seen 标记时延迟弹出询问弹窗（仅一次） */
@@ -2359,19 +2414,21 @@ internal class StockListPage : BasePager() {
         gotoGuideStep(1)
     }
 
-    /** 菜单「功能说明」重看：先复位回自选股 Tab 再进入步骤 1 */
+    /** 菜单「功能说明」重看：先复位回自选股 Tab 再进入步骤 1；顺带把就地提示也复位，方便重新体验 */
     private fun replayGuide() {
         guideStep = 0
         showGuidePrompt = false
         showMenu = false
         currentTab = 0
+        FeatureTips.resetAll(sp)
+        reloadFeatureTips()
         setTimeout(100) { gotoGuideStep(1) }
     }
 
     /**
      * 进入某一步：设置文案、按需打开菜单、设置高亮孔矩形。
      *
-     * v1.9.19：所有 8 步统一用 guideFallbackRect，不再走 convertFrame。
+     * v1.9.19：所有步骤统一用 guideFallbackRect，不再走 convertFrame。
      * 实测 vfor 列表 layer 内 / 菜单面板内部 view.frame 在某些情况下会被
      * 错算到列表中间或菜单中部，convertFrame + view.frame 补偿并不稳定。
      * 各步骤目标都在页面固定区域（边缘位置 / 固定坐标的菜单 panel），
@@ -2383,14 +2440,14 @@ internal class StockListPage : BasePager() {
         guideDesc = guideDescFor(step)
         // 同步给一个 fallback 矩形，立即让遮罩形态正确（避免初始 rect=(0,0,0,0) 全屏暗死）
         guideRect = guideFallbackRect(step)
-        // 步骤 4 需打开菜单（步骤 5-8 在菜单面板上继续高亮）
-        if (step == 4) showMenu = true
+        // 步骤 6 起在功能菜单面板上继续高亮，需先把菜单打开
+        if (step == 6) showMenu = true
         // 80/200ms 后再校准一次：root frame 在 layout 完成后取值可能变化
         // （早期 frame 还未稳定；fallback 重新取一次最新 root 尺寸）
         setTimeout(80) { applyGuideRect(step) }
         setTimeout(200) { applyGuideRect(step) }
         // 菜单面板首次打开 layout 完成偏慢（vif 触发子视图创建），再补一次兜底
-        if (step in 5..8) setTimeout(500) { applyGuideRect(step) }
+        if (step in 7..10) setTimeout(500) { applyGuideRect(step) }
     }
 
     /** 引导根容器有效宽度（布局完成前 fallback 到 pageView 尺寸） */
@@ -2404,11 +2461,12 @@ internal class StockListPage : BasePager() {
     /**
      * 各步骤目标矩形，全部按页面布局规则手工计算。
      *
-     * 步骤 1-4 是页面固定边缘位置（底栏 Tab / 顶栏按钮）：
-     * - 顶栏高度 = 56f + statusBarHeight
+     * 步骤 1-6 是页面固定边缘位置（底栏 Tab / 分组条 / 列表区 / 顶栏按钮）：
+     * - 顶栏高度 = 56f + statusBarHeight（含 sb），故内容区顶边 = sb + 56f
+     * - 分组条 chips 行高 = 44f + 1f 分隔线 → 列表区顶边 = sb + 101f
      * - 底栏 Tab 高 = 54f（位于 root.frame 最底部）
      *
-     * 步骤 5-8 是菜单面板内固定位置：
+     * 步骤 7-10 是菜单面板内固定位置：
      * - 菜单 panel absolutePosition(top=56f + statusBarHeight, left=0, right=0) 全宽，paddingTop/Bottom=6f
      * - 每项 49dp 高，分隔线 1dp，步进 50dp
      * - 项行占满整卡宽（x=0，width=w）
@@ -2431,20 +2489,31 @@ internal class StockListPage : BasePager() {
         val itemStep = 50f  // item 49dp（padding14+文字行高21+padding14）+ divider 1dp
         // 菜单项 y = panel top (sb+56) + 白卡 paddingTop 6 + 项序号 * 50
         val menuY = sb + 62f
+        // 顶栏底边 = 内容区顶边（顶栏 height 已含 sb，所以直接 sb + 56）
+        val contentTop = sb + 56f
+        // 列表区顶边 = 内容区顶边 + chips 行(44) + 分隔线(1)
+        val listTop = contentTop + 45f
         return when (step) {
             // 底部 Tab 栏：自选股(左半) / AI问答(右半)
             1 -> Frame(0f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
-            2 -> Frame(w / 2f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
+            // 分组条 chips 行（横向 Scroller + 底部分隔线）
+            2 -> Frame(0f, contentTop, w, 45f)
+            // 列表区（排序表头 + 股票行）。
+            // ⚠️ 高度取 236f 而不是刚好 178f：孔从 chips 下沿起算，而「就地功能提示条」会把列表整体下推
+            // （每条 ≈63dp），首启时提示条在场。放宽高度让「提示条在/不在」两种情况下都能框住列表本体，
+            // 代价只是多框两行股票，不影响理解。
+            3 -> Frame(0f, listTop, w, 236f)
+            4 -> Frame(w / 2f, (h - 54f).coerceAtLeast(0f), w / 2f, 54f)
             // 顶栏「刷新」：paddingLeft(6)+text 14sp+paddingRight(6)+marginRight(10)
             // 实测起点约 w-100（取决于"刷新"实际字宽，约 30-32dp）
-            3 -> Frame((w - 100f).coerceAtLeast(0f), sb + 15f, 50f, 26f)
+            5 -> Frame((w - 100f).coerceAtLeast(0f), sb + 15f, 50f, 26f)
             // 顶栏「☰」：paddingLeft(8)+"☰" 20sp+paddingRight(4)≈38dp，距右 4dp
-            4 -> Frame((w - 42f).coerceAtLeast(0f), sb + 9f, 38f, 38f)
+            6 -> Frame((w - 42f).coerceAtLeast(0f), sb + 9f, 38f, 38f)
             // 菜单面板 4 项：全宽行（菜单卡 left=0/right=0，项行占满整卡宽）
-            5 -> Frame(0f, menuY, w, itemH)
-            6 -> Frame(0f, menuY + itemStep, w, itemH)
-            7 -> Frame(0f, menuY + 2f * itemStep, w, itemH)
-            8 -> Frame(0f, menuY + 3f * itemStep, w, itemH)
+            7 -> Frame(0f, menuY, w, itemH)
+            8 -> Frame(0f, menuY + itemStep, w, itemH)
+            9 -> Frame(0f, menuY + 2f * itemStep, w, itemH)
+            10 -> Frame(0f, menuY + 3f * itemStep, w, itemH)
             else -> Frame(16f, sb + 80f, w - 32f, 120f)
         }
     }
@@ -2461,41 +2530,52 @@ internal class StockListPage : BasePager() {
 
     /** 「下一步」：最后一步结束引导，否则进入下一步 */
     private fun guideNext() {
-        if (guideStep >= 8) finishGuide() else gotoGuideStep(guideStep + 1)
+        if (guideStep >= GUIDE_LAST_STEP) finishGuide() else gotoGuideStep(guideStep + 1)
     }
 
     /** 「跳过」（询问弹窗或任意步骤）：结束并记录已看过 */
     private fun skipGuide() = finishGuide()
 
-    /** 结束引导：收起遮罩与菜单，写入已看过标记 */
+    /** 结束引导：收起遮罩与菜单，写入已看过标记与当前引导版本号 */
     private fun finishGuide() {
         guideStep = 0
         showGuidePrompt = false
         showMenu = false
         sp.setItem(KEY_GUIDE_SEEN, "1")
+        sp.setItem(KEY_GUIDE_VER, GUIDE_VER)
     }
+
+    /** 引导是否已落后于当前版本（老用户）→ 菜单「功能说明」右侧显示「有新内容」 */
+    private fun guideOutdated(): Boolean = sp.getItem(KEY_GUIDE_VER) != GUIDE_VER
 
     private fun guideTitleFor(step: Int): String = when (step) {
         1 -> "自选股"
-        2 -> "AI 问答"
-        3 -> "刷新行情"
-        4 -> "功能菜单"
-        5 -> "添加自选股"
-        6 -> if (isNightMode()) "日间模式" else "夜间模式"
-        7 -> "AI 设置"
-        8 -> "功能说明"
+        2 -> "自选分组"
+        3 -> "长按 / 排序"
+        4 -> "AI 问答"
+        5 -> "刷新行情"
+        6 -> "功能菜单"
+        7 -> "添加自选股"
+        8 -> if (isNightMode()) "日间模式" else "夜间模式"
+        9 -> "AI 设置"
+        10 -> "功能说明"
         else -> ""
     }
 
     private fun guideDescFor(step: Int): String = when (step) {
         1 -> "这里展示你关注的股票：最新价、涨跌额与涨跌幅一目了然，左滑单行可置顶或删除。"
-        2 -> "切到「AI 问答」，可与 AI 多轮讨论任意股票，回复会附带实时行情卡片。"
-        3 -> "点右上角「刷新」，或直接下拉列表，即可手动拉取最新行情。"
-        4 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置与使用帮助都从这里进入。"
-        5 -> "输入股票代码即可添加自选，例如 sh600519 贵州茅台。"
-        6 -> "一键切换深色 / 浅色外观，右侧小字显示当前档位。"
-        7 -> "在此配置 AI 服务（Base URL / Key / 模型），行情分析与问答共用。"
-        8 -> "以后想重温这段引导，随时点这里即可。点「完成」结束引导。"
+        2 -> "分组条把自选分成「持仓」「观察」等几类：点右侧 ＋ 新建分组，点组名只看该组，" +
+            "长按组名可重命名或删除（删除分组不会删掉股票，只会让它们回到「未分组」）。"
+        3 -> "长按任意股票行，可把它移动到某个分组；点表头可按价格 / 涨跌幅 / 名称排序，" +
+            "再点一次切换升降序，置顶的股票无论怎么排都在最前面。"
+        4 -> "切到「AI 问答」，可与 AI 多轮讨论任意股票，回复会附带实时行情卡片。" +
+            "长按任意消息可复制、引用追问、重新生成或删除。"
+        5 -> "点右上角「刷新」，或直接下拉列表，即可手动拉取最新行情。"
+        6 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置与使用帮助都从这里进入。"
+        7 -> "输入股票代码即可添加自选，例如 sh600519 贵州茅台；在某个分组里添加会自动归入该组。"
+        8 -> "一键切换深色 / 浅色外观，右侧小字显示当前档位。"
+        9 -> "在此配置 AI 服务（Base URL / Key / 模型），行情分析与问答共用。"
+        10 -> "以后想重温这段引导、或再看一次各页面的功能提示，随时点这里即可。点「完成」结束引导。"
         else -> ""
     }
 
@@ -2551,7 +2631,7 @@ internal class StockListPage : BasePager() {
                     }
                     Text {
                         attr {
-                            text("${ctx.guideStep}/8")
+                            text("${ctx.guideStep}/$GUIDE_LAST_STEP")
                             fontSize(12f)
                             color(ctx.pal.textSub)
                         }
@@ -2601,7 +2681,7 @@ internal class StockListPage : BasePager() {
                         }
                         Text {
                             attr {
-                                text(if (ctx.guideStep >= 8) "完成" else "下一步")
+                                text(if (ctx.guideStep >= GUIDE_LAST_STEP) "完成" else "下一步")
                                 fontSize(14f)
                                 color(ctx.pal.onAccent)
                                 fontWeightSemiBold()
@@ -2617,5 +2697,12 @@ internal class StockListPage : BasePager() {
     private companion object {
         /** 首启引导是否已看过（SP key；值为 "1" 表示已看过） */
         private const val KEY_GUIDE_SEEN = "guide_intro_seen"
+
+        /** 引导版本号：内容有新增时就升一档，老用户在菜单「功能说明」上会看到「有新内容」角标 */
+        private const val KEY_GUIDE_VER = "guide_intro_ver"
+        private const val GUIDE_VER = "2"
+
+        /** 引导总步数（1..GUIDE_LAST_STEP）；卡片右侧「N/总步数」与「完成」判定都用它 */
+        private const val GUIDE_LAST_STEP = 10
     }
 }
