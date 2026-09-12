@@ -76,6 +76,33 @@ internal class StockListPage : BasePager() {
     /** 当前排序是否为升序（价格/涨跌幅默认降序，名称默认升序） */
     private var sortAsc by observable(false)
 
+    // ==================== 自选分组（v1.9.30「留」层） ====================
+    /**
+     * 当前选中的分组。三种取值语义（用哨兵值而非可空类型，避免各处判空）：
+     * - [Watchlist.GROUP_ALL]（"全部"）→ 不过滤，展示所有自选
+     * - `""` → 只看未分组
+     * - 其它 → 该分组名
+     */
+    private var activeGroup by observable(Watchlist.GROUP_ALL)
+    /** 分组名列表（vfor 数据源，需 observableList） */
+    private var groupNames by observableList<String>()
+    /** 各分组股票数：key 空串 = 未分组；用于 chip 上显示数量 */
+    private var groupCounts by observable<Map<String, Int>>(emptyMap())
+    /** 未过滤的全量行情快照（分组过滤 + 排序都基于它重算） */
+    private var allQuotes: List<StockQuote> = emptyList()
+    /** 「移动到分组」浮层当前操作的股票（null = 不显示） */
+    private var moveSheetQuote by observable<StockQuote?>(null)
+    /** 分组 chip 长按菜单：当前操作的分组名（null = 不显示） */
+    private var groupMenuName by observable<String?>(null)
+    /** 待删除的分组（二次确认用，null = 不显示） */
+    private var pendingGroupDelete by observable<String?>(null)
+    /** 新建 / 重命名分组弹窗 */
+    private var showGroupDialog by observable(false)
+    /** 空串 = 新建分组；非空 = 正在重命名该分组 */
+    private var groupDialogRenameFrom by observable("")
+    private var groupInput by observable("")
+    private var groupInputRef: ViewRef<InputView>? = null
+
     // ==================== 首启引导 ====================
     /** 引导根容器引用（convertFrame 换算基准，body 根） */
     private var guideRootRef: ViewContainer<*, *>? = null
@@ -411,7 +438,15 @@ internal class StockListPage : BasePager() {
 
             // ---------- 内容区：自选股 Tab ----------
             vif({ ctx.currentTab == 0 }) {
-                ctx.listContent().invoke(this)
+                View {
+                    attr {
+                        flex(1f)
+                        flexDirectionColumn()
+                    }
+                    // 分组 chips 固定在列表上方（不随列表滚动）
+                    ctx.groupChipsRow().invoke(this)
+                    ctx.listContent().invoke(this)
+                }
             }
 
             // ---------- 内容区：AI 问答 Tab（内联，切 Tab 对话不丢） ----------
@@ -652,6 +687,20 @@ internal class StockListPage : BasePager() {
                         }
                     }
                 }
+            }
+
+            // ---------- 分组相关浮层（v1.9.30「留」层） ----------
+            vif({ ctx.moveSheetQuote != null }) {
+                ctx.moveSheet().invoke(this)
+            }
+            vif({ ctx.groupMenuName != null }) {
+                ctx.groupMenu().invoke(this)
+            }
+            vif({ ctx.showGroupDialog }) {
+                ctx.groupDialog().invoke(this)
+            }
+            vif({ ctx.pendingGroupDelete != null }) {
+                ctx.deleteGroupConfirm().invoke(this)
             }
 
             // ---------- 首启引导：询问弹窗 ----------
@@ -983,6 +1032,10 @@ internal class StockListPage : BasePager() {
                         vfor({ ctx.quotes }) { item ->
                             ctx.quoteItem(item).invoke(this)
                         }
+                        // 空态：整个自选为空 / 当前分组为空（两者引导文案不同）
+                        vif({ !ctx.loading && ctx.errorMsg.isEmpty() && ctx.quotes.isEmpty() }) {
+                            ctx.emptyStateHint().invoke(this)
+                        }
                     }
                 }
             }
@@ -1029,6 +1082,7 @@ internal class StockListPage : BasePager() {
     private fun loadData() {
         loading = true
         errorMsg = ""
+        reloadGroups()
         val metas = Watchlist.stocks(sp)
         // 1. 缓存优先展示（接口临时失效时页面不空白）
         val cached = StockCache.loadQuotes(sp)
@@ -1088,30 +1142,44 @@ internal class StockListPage : BasePager() {
     /** 置顶/取消置顶后按 Watchlist 顺序本地重排（不发网络请求） */
     private fun resortQuotes() {
         val metas = Watchlist.stocks(sp)
-        val byCode = quotes.associateBy { it.code }
-        val base = metas.mapNotNull { byCode[it.code] } +
-                quotes.filter { it.code !in metas.map { m -> m.code } }
-        if (base.size == quotes.size) {
+        val byCode = allQuotes.associateBy { it.code }
+        val metaCodes = metas.map { it.code }
+        val base = metas.mapNotNull { byCode[it.code] } + allQuotes.filter { it.code !in metaCodes }
+        if (base.size == allQuotes.size) {
             replaceQuotes(base)
+        } else {
+            applyFilterAndSort()
         }
     }
 
     // ==================== 排序（v1.9.28「探」层） ====================
 
     /**
-     * 按当前排序键重排并写回列表。
-     * 规则：置顶项永远排在最前（内部保持自选顺序），其余按排序键排。
+     * 接收一批新行情：先存为全量快照，再按「当前分组过滤 + 置顶 + 排序键」重算展示列表。
+     * 分组过滤放在最前，保证置顶项只在组内生效——否则切到某组还会看到别组的置顶股。
      */
     private fun replaceQuotes(list: List<StockQuote>) {
-        val snapshot = list.toList() // 先拷贝再 clear，避免遍历 observableList 时修改自身
-        val pinned = snapshot.filter { Watchlist.isPinned(sp, it.code) }
-        val rest = snapshot.filter { !Watchlist.isPinned(sp, it.code) }
+        allQuotes = list.toList()
+        applyFilterAndSort()
+    }
+
+    /** 按 [activeGroup] 过滤 [allQuotes]，再套用置顶 + 排序，写回 quotes（vfor 数据源） */
+    private fun applyFilterAndSort() {
+        val groupOf = Watchlist.stocks(sp).associate { it.code to it.group }
+        val scoped = when (activeGroup) {
+            Watchlist.GROUP_ALL -> allQuotes
+            "" -> allQuotes.filter { (groupOf[it.code] ?: "").isEmpty() }
+            else -> allQuotes.filter { groupOf[it.code] == activeGroup }
+        }
+        val pinned = scoped.filter { Watchlist.isPinned(sp, it.code) }
+        val rest = scoped.filter { !Watchlist.isPinned(sp, it.code) }
         val sortedRest = when (sortKey) {
             "price" -> order(rest) { it.price }
             "changePercent" -> order(rest) { it.changePercent }
             "name" -> order(rest) { it.name }
             else -> rest
         }
+        // 先拷贝再 clear，避免遍历 observableList 时修改自身
         quotes.clear()
         quotes.addAll(pinned + sortedRest)
     }
@@ -1129,7 +1197,685 @@ internal class StockListPage : BasePager() {
             sortKey = key
             sortAsc = (key == "name")
         }
-        replaceQuotes(quotes.toList())
+        applyFilterAndSort()
+    }
+
+    // ==================== 分组（v1.9.30「留」层） ====================
+
+    /** 重新读取分组名与各分组数量（新建/重命名/删除/移动归属后都要调） */
+    private fun reloadGroups() {
+        val names = Watchlist.groups(sp)
+        groupNames.clear()
+        groupNames.addAll(names)
+        groupCounts = Watchlist.groupCounts(sp)
+        // 当前选中组被删掉 → 回到「全部」，否则列表会一直空白
+        if (activeGroup != Watchlist.GROUP_ALL && activeGroup.isNotEmpty() && activeGroup !in names) {
+            activeGroup = Watchlist.GROUP_ALL
+        }
+    }
+
+    /**
+     * 切换分组：只改过滤条件 + 重算列表，不重建页面。
+     * ⚠️ 不能叫 setActiveGroup —— 会和 activeGroup 属性的 JVM setter 签名冲突（Platform declaration clash）。
+     */
+    private fun switchGroup(group: String) {
+        if (activeGroup == group) return
+        activeGroup = group
+        applyFilterAndSort()
+    }
+
+    /** 分组 chip 上显示的数量：[group] 为 [Watchlist.GROUP_ALL] 时是自选总数 */
+    private fun countOf(group: String): Int {
+        return when (group) {
+            Watchlist.GROUP_ALL -> groupCounts.values.sum()
+            else -> groupCounts[group] ?: 0
+        }
+    }
+
+    /** 是否有未分组的股票（决定「未分组」chip 是否出现） */
+    private fun hasUngrouped(): Boolean = (groupCounts[""] ?: 0) > 0
+
+    /**
+     * 分组 chips 行：全部 / 未分组 / 各分组 / ＋新建。
+     * 用横向 Scroller（attr 里 flexDirectionRow 即横向滚动），固定在列表上方、不随列表滚动。
+     */
+    private fun groupChipsRow(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    flexDirectionColumn()
+                    backgroundColor(ctx.pal.card)
+                }
+                Scroller {
+                    attr {
+                        height(44f)
+                        flexDirectionRow()
+                        showScrollerIndicator(false)
+                        paddingLeft(12f)
+                        paddingRight(12f)
+                    }
+                    ctx.groupChip(Watchlist.GROUP_ALL, Watchlist.GROUP_ALL).invoke(this)
+                    // 「未分组」是隐式分组：只有确实存在未分组股票时才出现，避免空 chip 占位
+                    vif({ ctx.hasUngrouped() }) {
+                        ctx.groupChip(Watchlist.GROUP_NONE_LABEL, "").invoke(this)
+                    }
+                    vfor({ ctx.groupNames }) { name ->
+                        ctx.groupChip(name, name).invoke(this)
+                    }
+                    ctx.addGroupChip().invoke(this)
+                }
+                View {
+                    attr {
+                        height(1f)
+                        backgroundColor(ctx.pal.divider)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 单个分组 chip。[filter] 是写入 [activeGroup] 的过滤值（全部=GROUP_ALL / 未分组="" / 组名）。
+     * ⚠️ 选中态与数量都必须在 attr / text 内读取 observable：在 ViewBuilder 外层算好再闭包捕获，
+     * 不会建立响应式依赖，切组或数量变化时 chip 不会重绘。
+     * ⚠️ 热区必须显式 width/height：仅靠 padding 撑开的 View 真机命中区域约等于文字本身。
+     */
+    private fun groupChip(label: String, filter: String): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    height(30f)
+                    paddingLeft(12f)
+                    paddingRight(12f)
+                    marginRight(8f)
+                    marginTop(7f)
+                    borderRadius(15f)
+                    allCenter()
+                    backgroundColor(
+                        if (ctx.activeGroup == filter) ctx.pal.accent else ctx.pal.chipBg
+                    )
+                }
+                Text {
+                    attr {
+                        val n = ctx.countOf(filter)
+                        text(if (n > 0) "$label $n" else label)
+                        fontSize(12f)
+                        fontWeightSemiBold()
+                        color(if (ctx.activeGroup == filter) ctx.pal.onAccent else ctx.pal.textMain)
+                    }
+                }
+                event {
+                    click { ctx.switchGroup(filter) }
+                    // 长按弹「重命名 / 删除」；「全部」与「未分组」是隐式分组，无可管理项
+                    longPress {
+                        if (filter.isNotEmpty() && filter != Watchlist.GROUP_ALL) {
+                            ctx.groupMenuName = filter
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** chips 行尾部的「＋」：新建分组 */
+    private fun addGroupChip(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    width(34f)
+                    height(30f)
+                    marginTop(7f)
+                    borderRadius(15f)
+                    allCenter()
+                    backgroundColor(ctx.pal.chipBg)
+                }
+                Text {
+                    attr {
+                        text("＋")
+                        fontSize(14f)
+                        color(ctx.pal.textSub)
+                    }
+                }
+                event {
+                    click { ctx.openGroupDialog("") }
+                }
+            }
+        }
+    }
+
+    // ---------------- 分组：浮层 ----------------
+
+    /** 列表空态：区分「整个自选为空」与「当前分组为空」，给不同引导文案 */
+    private fun emptyStateHint(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    paddingTop(60f)
+                    paddingLeft(32f)
+                    paddingRight(32f)
+                    flexDirectionColumn()
+                    allCenter()
+                }
+                Text {
+                    attr {
+                        val isAll = ctx.activeGroup == Watchlist.GROUP_ALL
+                        text(if (isAll) "自选列表还是空的" else "「${ctx.groupLabel()}」里还没有股票")
+                        fontSize(14f)
+                        color(ctx.pal.textSub)
+                        marginBottom(8f)
+                    }
+                }
+                Text {
+                    attr {
+                        val isAll = ctx.activeGroup == Watchlist.GROUP_ALL
+                        text(if (isAll) "点右上角菜单里的「添加自选股」开始" else "长按任意股票即可把它移到这个分组")
+                        fontSize(12f)
+                        color(ctx.pal.textSub)
+                        textAlignCenter()
+                    }
+                }
+            }
+        }
+    }
+
+    /** 「移动到分组」浮层：列出 未分组 + 所有分组，当前归属项打勾 */
+    private fun moveSheet(): ViewBuilder {
+        val ctx = this
+        return {
+            val quote = ctx.moveSheetQuote
+            if (quote != null) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.moveSheetQuote = null }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                paddingTop(18f)
+                                paddingBottom(18f)
+                                flexDirectionColumn()
+                                overflow(true)
+                            }
+                            // 空点击消费：避免冒泡到遮罩把浮层关掉
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("移动到分组")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.textMain)
+                                    marginLeft(20f)
+                                    marginRight(20f)
+                                    marginBottom(4f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text(quote.name)
+                                    fontSize(12f)
+                                    color(ctx.pal.textSub)
+                                    marginLeft(20f)
+                                    marginRight(20f)
+                                    marginBottom(10f)
+                                }
+                            }
+                            Scroller {
+                                attr {
+                                    // 最多露 7 行，再多就滚动，避免浮层高于屏幕
+                                    height((1 + ctx.groupNames.size).coerceAtMost(7) * 46f)
+                                    showScrollerIndicator(false)
+                                }
+                                ctx.moveTargetRow(quote, Watchlist.GROUP_NONE_LABEL, "").invoke(this)
+                                vfor({ ctx.groupNames }) { name ->
+                                    ctx.moveTargetRow(quote, name, name).invoke(this)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 「移动到分组」浮层里的单个选项行 */
+    private fun moveTargetRow(quote: StockQuote, label: String, filter: String): ViewBuilder {
+        val ctx = this
+        // 弹出浮层时构建一次，用于打勾；SP 无响应式，靠打开时重建保证正确
+        val current = ctx.currentGroupOf(quote.code)
+        return {
+            View {
+                attr {
+                    height(46f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(20f)
+                    paddingRight(20f)
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text(label)
+                        fontSize(14f)
+                        color(ctx.pal.textMain)
+                    }
+                }
+                if (current == filter) {
+                    Text {
+                        attr {
+                            text("✓")
+                            fontSize(15f)
+                            fontWeightSemiBold()
+                            color(ctx.pal.accent)
+                        }
+                    }
+                }
+                event {
+                    click { ctx.doMoveToGroup(quote, filter) }
+                }
+            }
+        }
+    }
+
+    /** 新建 / 重命名分组弹窗（[groupDialogRenameFrom] 空串表示新建） */
+    private fun groupDialog(): ViewBuilder {
+        val ctx = this
+        return {
+            Modal {
+                View {
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        backgroundColor(ctx.pal.maskFull)
+                    }
+                    event {
+                        click { ctx.showGroupDialog = false }
+                    }
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 60f)
+                            borderRadius(12f)
+                            backgroundColor(ctx.pal.card)
+                            padding(20f)
+                        }
+                        event {
+                            click { }
+                        }
+                        Text {
+                            attr {
+                                text(if (ctx.groupDialogRenameFrom.isEmpty()) "新建分组" else "重命名分组")
+                                fontSize(16f)
+                                fontWeightSemiBold()
+                                color(ctx.pal.textMain)
+                                marginBottom(14f)
+                            }
+                        }
+                        View {
+                            attr {
+                                height(44f)
+                                borderRadius(8f)
+                                backgroundColor(ctx.pal.chipBg)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                            }
+                            Input {
+                                ref { ctx.groupInputRef = it }
+                                attr {
+                                    flex(1f)
+                                    height(40f)   // 显式高度：Kuikly Input 无 height 时无可点击区域
+                                    fontSize(14f)
+                                    color(ctx.pal.textMain)
+                                    placeholder("如：持仓 / 观察 / 题材")
+                                    placeholderColor(ctx.pal.textSub)
+                                    maxTextLength(Watchlist.MAX_GROUP_NAME)
+                                }
+                                event {
+                                    textDidChange { ctx.groupInput = it.text }
+                                }
+                            }
+                        }
+                        Text {
+                            attr {
+                                text("分组名最多 ${Watchlist.MAX_GROUP_NAME} 个字，最多 ${Watchlist.MAX_GROUPS} 个分组")
+                                fontSize(11f)
+                                color(ctx.pal.textSub)
+                                marginTop(8f)
+                            }
+                        }
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                marginTop(16f)
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.chip2Bg)
+                                    marginRight(12f)
+                                }
+                                Text {
+                                    attr {
+                                        text("取消")
+                                        fontSize(14f)
+                                        color(ctx.pal.textSub)
+                                    }
+                                }
+                                event {
+                                    click { ctx.showGroupDialog = false }
+                                }
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.accent)
+                                }
+                                Text {
+                                    attr {
+                                        text(if (ctx.groupDialogRenameFrom.isEmpty()) "新建" else "保存")
+                                        fontSize(14f)
+                                        color(ctx.pal.onAccent)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event {
+                                    click { ctx.confirmGroupDialog() }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 分组 chip 长按菜单：重命名 / 删除 */
+    private fun groupMenu(): ViewBuilder {
+        val ctx = this
+        return {
+            val name = ctx.groupMenuName
+            if (name != null) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.groupMenuName = null }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 110f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                paddingTop(6f)
+                                paddingBottom(6f)
+                                flexDirectionColumn()
+                                overflow(true)
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("分组「$name」")
+                                    fontSize(13f)
+                                    color(ctx.pal.textSub)
+                                    marginLeft(20f)
+                                    marginRight(20f)
+                                    marginTop(12f)
+                                    marginBottom(8f)
+                                }
+                            }
+                            ctx.groupMenuRow("重命名") { ctx.openGroupDialog(name) }.invoke(this)
+                            // ⚠️ 选「删除」时必须先关掉菜单：否则菜单与二次确认同时存在，
+                            // 确认框关闭后会残留一个指向已删分组的菜单
+                            ctx.groupMenuRow("删除", danger = true) {
+                                ctx.groupMenuName = null
+                                ctx.pendingGroupDelete = name
+                            }.invoke(this)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 分组长按菜单里的单行。
+     * ⚠️ danger 用 [ThemePalette.up]（红）而不是 down —— 本项目遵循 A 股涨红跌绿，
+     * down 是绿色，拿来标"删除"会误导。
+     */
+    private fun groupMenuRow(label: String, danger: Boolean = false, onClick: () -> Unit): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    height(48f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(20f)
+                    paddingRight(20f)
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text(label)
+                        fontSize(15f)
+                        color(if (danger) ctx.pal.up else ctx.pal.textMain)
+                    }
+                }
+                event {
+                    click { onClick() }
+                }
+            }
+        }
+    }
+
+    /** 删除分组二次确认（组内股票只回到「未分组」，不会删自选） */
+    private fun deleteGroupConfirm(): ViewBuilder {
+        val ctx = this
+        return {
+            val name = ctx.pendingGroupDelete
+            if (name != null) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.pendingGroupDelete = null }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                padding(20f)
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("删除分组")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.textMain)
+                                    marginBottom(10f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("删除「$name」后，组内 ${ctx.countOf(name)} 只股票会回到「未分组」，仍留在自选里。")
+                                    fontSize(13f)
+                                    color(ctx.pal.textSub)
+                                }
+                            }
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    marginTop(18f)
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        backgroundColor(ctx.pal.chip2Bg)
+                                        marginRight(12f)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("取消")
+                                            fontSize(14f)
+                                            color(ctx.pal.textSub)
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.pendingGroupDelete = null }
+                                    }
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        // 危险操作用 up（红）——本项目 A 股配色：up=红
+                                        backgroundColor(ctx.pal.up)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("删除")
+                                            fontSize(14f)
+                                            color(ctx.pal.onAccent)
+                                            fontWeightSemiBold()
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.deleteGroup(name) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- 分组：操作逻辑 ----------------
+
+    /** 某只股票当前所属分组名（空串 = 未分组） */
+    private fun currentGroupOf(code: String): String {
+        return Watchlist.stocks(sp).firstOrNull { it.code == code }?.group ?: ""
+    }
+
+    /** 当前分组名的展示文案（「全部」虚拟分组原样返回） */
+    private fun groupLabel(): String {
+        return if (activeGroup.isEmpty()) Watchlist.GROUP_NONE_LABEL else activeGroup
+    }
+
+    /** 打开新建（[renameFrom] 空串）或重命名分组弹窗 */
+    private fun openGroupDialog(renameFrom: String) {
+        groupMenuName = null
+        groupDialogRenameFrom = renameFrom
+        groupInput = renameFrom
+        showGroupDialog = true
+        // 预填旧名：Input 的显示值要显式 setText（attr 里的初始 text 不会同步）
+        setTimeout(0) { groupInputRef?.view?.setText(renameFrom) }
+    }
+
+    /** 提交新建 / 重命名 */
+    private fun confirmGroupDialog() {
+        val clean = Watchlist.normalizeGroupName(groupInput)
+        if (clean.isEmpty()) {
+            bridgeModule.toast("分组名不能为空，且不能叫「全部」或「未分组」")
+            return
+        }
+        val renaming = groupDialogRenameFrom.isNotEmpty()
+        val ok = if (renaming) {
+            Watchlist.renameGroup(sp, groupDialogRenameFrom, clean)
+        } else {
+            Watchlist.addGroup(sp, clean)
+        }
+        if (!ok) {
+            bridgeModule.toast(
+                when {
+                    Watchlist.groups(sp).size >= Watchlist.MAX_GROUPS && !renaming ->
+                        "最多只能有 ${Watchlist.MAX_GROUPS} 个分组"
+                    Watchlist.groups(sp).any { it == clean } -> "已经有同名分组了"
+                    else -> "操作失败，请重试"
+                }
+            )
+            return
+        }
+        bridgeModule.toast(if (renaming) "已重命名为「$clean」" else "已新建分组「$clean」")
+        showGroupDialog = false
+        // 当前正在该组内 → 跟随改名
+        if (renaming && activeGroup == groupDialogRenameFrom) activeGroup = clean
+        // 关闭浮层后再刷新 chips，避免 vfor 遍历中 clear+addAll
+        setTimeout(50) {
+            reloadGroups()
+            applyFilterAndSort()
+        }
+    }
+
+    /** 把股票移动到目标分组（[filter] 空串 = 未分组） */
+    private fun doMoveToGroup(quote: StockQuote, filter: String) {
+        val changed = Watchlist.moveToGroup(sp, quote.code, filter)
+        moveSheetQuote = null
+        if (changed) {
+            bridgeModule.toast(
+                if (filter.isEmpty()) "${quote.name} 已移到「${Watchlist.GROUP_NONE_LABEL}」"
+                else "${quote.name} 已移到「$filter」"
+            )
+        }
+        // 先关浮层再刷新：vfor 正在遍历 groupNames 时 clear+addAll 会崩
+        setTimeout(50) {
+            reloadGroups()
+            applyFilterAndSort()
+        }
+    }
+
+    /** 删除分组：只解散分组，组内股票回「未分组」 */
+    private fun deleteGroup(name: String) {
+        pendingGroupDelete = null
+        groupMenuName = null
+        if (Watchlist.removeGroup(sp, name)) {
+            bridgeModule.toast("已删除分组「$name」")
+        }
+        if (activeGroup == name) activeGroup = Watchlist.GROUP_ALL
+        setTimeout(50) {
+            reloadGroups()
+            applyFilterAndSort()
+        }
     }
 
     /** 排序表头行：列宽与行情行严格一致（flex + 80f + 10f + 110f） */
@@ -1224,7 +1970,14 @@ internal class StockListPage : BasePager() {
             }
             val meta = StockMeta(q.code, q.name.ifBlank { q.symbol })
             if (Watchlist.add(sp, meta)) {
-                bridgeModule.toast("已添加 ${meta.name}")
+                // 正在某个分组里添加 → 直接归入该组，省得再加一次「移动分组」
+                val intoGroup = activeGroup
+                if (intoGroup.isNotEmpty() && intoGroup != Watchlist.GROUP_ALL) {
+                    Watchlist.moveToGroup(sp, meta.code, intoGroup)
+                    bridgeModule.toast("已添加 ${meta.name} 到「$intoGroup」")
+                } else {
+                    bridgeModule.toast("已添加 ${meta.name}")
+                }
                 showAddDialog = false
                 loadData()
             } else {
@@ -1463,6 +2216,15 @@ internal class StockListPage : BasePager() {
                             } else if (st == null || now - st.lastGestureEndTime > ctx.swipeClickGuardMs) {
                                 ctx.openDetail(quote) // 刚结束滑动手势时不响应点击，避免误进详情
                             }
+                        }
+                        // 长按：呼出「移动到分组」浮层。
+                        // 顺手刷新手势结束时间戳，复用 click 的防抖窗口挡住长按抬手后的 click，
+                        // 否则会「先弹浮层、紧接着又跳进详情页」
+                        longPress {
+                            val st = ctx.ensureSwipeState(quote.code)
+                            st.lastGestureEndTime = ctx.bridgeModule.currentTimeStamp()
+                            if (st.offset < 0f) st.offset = 0f
+                            ctx.moveSheetQuote = quote
                         }
                         // 低层触摸事件实现左滑检测：
                         // 不注册 pan，避免 Android 上 DOWN 即 requestDisallowInterceptTouchEvent(true)

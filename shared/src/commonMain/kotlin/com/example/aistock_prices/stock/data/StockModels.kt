@@ -8,7 +8,9 @@ package com.example.aistock_prices.stock.data
 data class StockMeta(
     val code: String,   // 腾讯代码，如 sh600519 / sz000001
     val name: String,   // 本地维护的中文名称
-    val pinned: Boolean = false // 是否置顶（置顶项排在最前）
+    val pinned: Boolean = false, // 是否置顶（置顶项排在最前）
+    /** 所属分组名；空串表示「未分组」（老数据无该字段时也落到空串，无需迁移） */
+    val group: String = ""
 ) {
     val symbol: String get() = code.removePrefix("sh").removePrefix("sz").removePrefix("hk")
 }
@@ -114,6 +116,128 @@ object Watchlist {
         return stocks(sp).firstOrNull { it.code == code }?.pinned == true
     }
 
+    // ---------------- 分组 ----------------
+    // 归属模型是「单归属」：一只股票只属于一个分组，空串 = 未分组。
+    // 分组名本身就是标识（不额外引入 id），重命名时同步改写股票上的 group 字段。
+
+    private const val KEY_GROUPS = "watchlist_groups"
+
+    /** 分组名长度上限（chip 上要显示，太长会撑破布局） */
+    const val MAX_GROUP_NAME = 8
+
+    /** 分组数量上限 */
+    const val MAX_GROUPS = 12
+
+    /** 「全部」是列表页的虚拟分组（聚合所有股票），不允许用户建同名分组 */
+    const val GROUP_ALL = "全部"
+
+    /** 未分组的展示名（内部仍用空串表示） */
+    const val GROUP_NONE_LABEL = "未分组"
+
+    /**
+     * 规范化用户输入的分组名：折叠内部空白 + 截断超长。
+     * 返回空串表示非法（空名），调用方应拒绝。
+     */
+    fun normalizeGroupName(raw: String): String {
+        val name = raw.trim().replace(Regex("\\s+"), " ")
+        if (name.isEmpty()) return ""
+        if (name == GROUP_ALL || name == GROUP_NONE_LABEL) return ""
+        return if (name.length > MAX_GROUP_NAME) name.substring(0, MAX_GROUP_NAME) else name
+    }
+
+    /** 全部分组名，按用户维护的顺序 */
+    fun groups(sp: com.tencent.kuikly.core.module.SharedPreferencesModule): List<String> {
+        val raw = sp.getItem(KEY_GROUPS)
+        if (raw.isBlank()) return emptyList()
+        return try {
+            val arr = com.tencent.kuikly.core.nvi.serialization.json.JSONObject(raw).optJSONArray("list")
+                ?: return emptyList()
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.optString("name")?.takeIf { it.isNotBlank() }
+            }
+        } catch (e: Throwable) {
+            emptyList()
+        }
+    }
+
+    /** 新建分组；已存在或超出上限返回 false */
+    fun addGroup(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, name: String): Boolean {
+        val clean = normalizeGroupName(name)
+        if (clean.isEmpty()) return false
+        val list = groups(sp)
+        if (list.any { it == clean }) return false
+        if (list.size >= MAX_GROUPS) return false
+        saveGroups(sp, list + clean)
+        return true
+    }
+
+    /** 重命名分组：同步改写组内股票的 group 字段，保持归属不丢 */
+    fun renameGroup(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        from: String,
+        to: String
+    ): Boolean {
+        val clean = normalizeGroupName(to)
+        if (clean.isEmpty() || from == clean) return false
+        val list = groups(sp)
+        if (from !in list) return false
+        if (list.any { it == clean }) return false
+        saveGroups(sp, list.map { if (it == from) clean else it })
+        // 组内股票改挂新组名
+        val stocks = stocks(sp)
+        if (stocks.any { it.group == from }) {
+            save(sp, stocks.map { if (it.group == from) it.copy(group = clean) else it })
+        }
+        return true
+    }
+
+    /**
+     * 删除分组：只解散分组，组内股票回到「未分组」（仍留在自选里）。
+     * 采用单归属模型，所以「谁在这个组里」等价于 `meta.group == name`，不需要额外的成员表。
+     */
+    fun removeGroup(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, name: String): Boolean {
+        val list = groups(sp)
+        if (name !in list) return false
+        saveGroups(sp, list.filter { it != name })
+        val stocks = stocks(sp)
+        if (stocks.any { it.group == name }) {
+            save(sp, stocks.map { if (it.group == name) it.copy(group = "") else it })
+        }
+        return true
+    }
+
+    /** 把某只股票移动到目标分组（空串 = 未分组）。目标组不存在时返回 false */
+    fun moveToGroup(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        code: String,
+        group: String
+    ): Boolean {
+        if (group.isNotEmpty() && group !in groups(sp)) return false
+        val list = stocks(sp)
+        val target = list.firstOrNull { it.code == code } ?: return false
+        if (target.group == group) return false
+        save(sp, list.map { if (it.code == code) it.copy(group = group) else it })
+        return true
+    }
+
+    /** 统计各分组的股票数（key 为空串表示未分组），供 chip 上显示数量 */
+    fun groupCounts(sp: com.tencent.kuikly.core.module.SharedPreferencesModule): Map<String, Int> {
+        return stocks(sp).groupingBy { it.group }.eachCount()
+    }
+
+    private fun saveGroups(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, list: List<String>) {
+        val arr = com.tencent.kuikly.core.nvi.serialization.json.JSONArray()
+        list.forEach { name ->
+            arr.put(
+                com.tencent.kuikly.core.nvi.serialization.json.JSONObject().apply { put("name", name) }
+            )
+        }
+        sp.setItem(
+            KEY_GROUPS,
+            com.tencent.kuikly.core.nvi.serialization.json.JSONObject().apply { put("list", arr) }.toString()
+        )
+    }
+
     private fun save(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, list: List<StockMeta>) {
         val arr = com.tencent.kuikly.core.nvi.serialization.json.JSONArray()
         list.forEach { meta ->
@@ -122,6 +246,7 @@ object Watchlist {
                     put("code", meta.code)
                     put("name", meta.name)
                     put("pinned", meta.pinned)
+                    put("group", meta.group)
                 }
             )
         }
@@ -136,7 +261,12 @@ object Watchlist {
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val code = o.optString("code") ?: return@mapNotNull null
                 if (code.isBlank()) return@mapNotNull null
-                StockMeta(code, o.optString("name").ifBlank { code }, o.optBoolean("pinned") ?: false)
+                StockMeta(
+                    code = code,
+                    name = o.optString("name").ifBlank { code },
+                    pinned = o.optBoolean("pinned") ?: false,
+                    group = o.optString("group") ?: ""
+                )
             }
         } catch (e: Throwable) {
             emptyList()
