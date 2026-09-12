@@ -10,7 +10,11 @@ import com.example.aistock_prices.stock.ai.AiAnalysisService
 import com.example.aistock_prices.stock.ai.AiConfig
 import com.example.aistock_prices.stock.ai.KeyLevel
 import com.example.aistock_prices.stock.ai.MetricInsight
+import com.example.aistock_prices.stock.data.AddLevelResult
 import com.example.aistock_prices.stock.data.KLineBar
+import com.example.aistock_prices.stock.data.KeyLevelMark
+import com.example.aistock_prices.stock.data.LevelKind
+import com.example.aistock_prices.stock.data.LevelStore
 import com.example.aistock_prices.stock.data.MinutePoint
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockQuote
@@ -33,6 +37,7 @@ import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.velse
+import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.module.RouterModule
@@ -76,6 +81,14 @@ internal class StockDetailPage : BasePager() {
     private var pollTimerRef = ""
     /** 加载超时兜底计时器引用 */
     private var loadTimerRef = ""
+
+    // ---------------- 关键位备忘（用户手动标记，按股票持久化） ----------------
+    /** 用户标记的关键位；与 AI 产出的 keyLevels 相互独立，画线时合并 */
+    private var keyLevels by observableList<KeyLevelMark>()
+    /** 关键位面板是否展开 */
+    private var levelPanelOpen by observable(false)
+    /** 待标记的价格：从 K 线「＋标记」进来时有值，从标题行入口进来时为 null（用最新价） */
+    private var pendingLevelPrice by observable<Double?>(null)
 
     private val stockCode: String get() = pagerData.params.optString("code")
     private val stockName: String get() = pagerData.params.optString("name", "个股详情")
@@ -198,12 +211,270 @@ internal class StockDetailPage : BasePager() {
                     ctx.detailContent().invoke(this)
                 }
             }
+
+            // ---------- 关键位面板（浮层置于 body 末尾，zIndex 最高） ----------
+            vif({ ctx.levelPanelOpen }) {
+                ctx.levelPanel().invoke(this)
+            }
         }
     }
 
     override fun viewDidLoad() {
         super.viewDidLoad()
+        reloadKeyLevels()
         loadDetail()
+    }
+
+    // ==================== 关键位备忘 ====================
+
+    /** 从本地读出该股票已标记的关键位（SP key = key_levels_<code>） */
+    private fun reloadKeyLevels() {
+        if (stockCode.isBlank()) return
+        val list = LevelStore.levels(sp, stockCode)
+        keyLevels.clear()
+        keyLevels.addAll(list)
+    }
+
+    /** 打开关键位面板；[price] 非空表示从 K 线「＋标记」进来（带上了要标的价） */
+    private fun openLevelPanel(price: Double?) {
+        reloadKeyLevels()
+        pendingLevelPrice = price
+        levelPanelOpen = true
+    }
+
+    private fun closeLevelPanel() {
+        levelPanelOpen = false
+        pendingLevelPrice = null
+    }
+
+    /** 待标记价格：K 线传来的优先，否则退回最新价 */
+    private fun currentMarkPrice(): Double? =
+        (pendingLevelPrice ?: quote?.price)?.takeIf { it > 0.0 }
+
+    private fun addLevel(kind: LevelKind) {
+        val price = currentMarkPrice() ?: run {
+            bridgeModule.toast("暂无可标记的价格")
+            return
+        }
+        when (LevelStore.add(sp, stockCode, KeyLevelMark(price, kind))) {
+            AddLevelResult.ADDED -> {
+                reloadKeyLevels()
+                bridgeModule.toast("已标记 ${StockFormat.price(price)} ${kind.label}")
+            }
+            AddLevelResult.DUPLICATE -> bridgeModule.toast("该价位已标记过")
+            AddLevelResult.FULL -> bridgeModule.toast("最多标记 12 个关键位")
+        }
+    }
+
+    private fun removeLevel(mark: KeyLevelMark) {
+        if (LevelStore.remove(sp, stockCode, mark.price, mark.kind)) {
+            reloadKeyLevels()
+            bridgeModule.toast("已删除")
+        }
+    }
+
+    /** 关键位类型配色：支撑=绿(跌色)、压力=红(涨色)、成本=橙 */
+    private fun levelKindColor(kind: LevelKind): Color = when (kind) {
+        LevelKind.SUPPORT -> pal.down
+        LevelKind.RESISTANCE -> pal.up
+        LevelKind.COST -> Color(0xFFE6A23C)
+    }
+
+    /**
+     * K 线参考线：AI 分析给出的 + 用户自己标记的。
+     * 顺序上把 AI 的放前面、用户的放后面（后画的盖在上面）；
+     * 用户线用更粗的线宽 + 「我·」前缀，避免和 AI 的线糊在一起分不清。
+     */
+    private fun buildPriceLevels(): List<PriceLevel> {
+        val ai = aiResult?.keyLevels?.map { lvl ->
+            PriceLevel(
+                price = lvl.price.toFloat(),
+                label = lvl.label,
+                color = if (lvl.type == KeyLevel.TYPE_RESISTANCE) pal.up else pal.down
+            )
+        } ?: emptyList()
+        val mine = keyLevels.map { m ->
+            PriceLevel(
+                price = m.price.toFloat(),
+                label = "我·" + m.kind.label,
+                color = levelKindColor(m.kind),
+                width = 2f
+            )
+        }
+        return ai + mine
+    }
+
+    /** 关键位面板：上半选类型（标记当前价），下半是已标记列表（可删） */
+    private fun levelPanel(): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    zIndex(149)
+                    backgroundColor(Color(0x66000000))
+                    allCenter()
+                }
+                event {
+                    click { ctx.closeLevelPanel() }
+                }
+                View {
+                    attr {
+                        width(ctx.pagerData.pageViewWidth - 80f)
+                        borderRadius(14f)
+                        backgroundColor(ctx.pal.card)
+                        padding(16f)
+                        flexDirectionColumn()
+                        zIndex(150)
+                    }
+                    // 消费点击，避免冒泡到遮罩把面板关掉
+                    event {
+                        click { }
+                    }
+                    // 标题 + 关闭
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            marginBottom(12f)
+                        }
+                        Text {
+                            attr {
+                                flex(1f)
+                                text("关键位")
+                                fontSize(16f)
+                                fontWeightSemiBold()
+                                color(ctx.pal.textMain)
+                            }
+                        }
+                        View {
+                            attr {
+                                width(28f)
+                                height(28f)
+                                allCenter()
+                            }
+                            Text {
+                                attr {
+                                    text("✕")
+                                    fontSize(14f)
+                                    color(ctx.pal.textSub)
+                                }
+                            }
+                            event {
+                                click { ctx.closeLevelPanel() }
+                            }
+                        }
+                    }
+                    // 标记区（有待标记价格时才有意义）
+                    vif({ ctx.currentMarkPrice() != null }) {
+                        val p = ctx.currentMarkPrice()
+                        Text {
+                            attr {
+                                text("把 ${StockFormat.price(p ?: 0.0)} 标记为：")
+                                fontSize(12f)
+                                color(ctx.pal.textSub)
+                                marginBottom(8f)
+                            }
+                        }
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                marginBottom(12f)
+                            }
+                            LevelKind.values().forEachIndexed { i, kind ->
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(34f)
+                                        allCenter()
+                                        borderRadius(8f)
+                                        backgroundColor(ctx.pal.chipBg)
+                                        if (i < LevelKind.values().size - 1) marginRight(8f)
+                                    }
+                                    Text {
+                                        attr {
+                                            text(kind.label)
+                                            fontSize(13f)
+                                            color(ctx.levelKindColor(kind))
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.addLevel(kind) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 已标记列表
+                    Text {
+                        attr {
+                            text("已标记（长按 K 线选好价位点右上角「标记」可继续添加）")
+                            fontSize(11f)
+                            color(ctx.pal.textSub)
+                            lineHeight(16f)
+                            marginBottom(4f)
+                        }
+                    }
+                    vif({ ctx.keyLevels.isEmpty() }) {
+                        Text {
+                            attr {
+                                // 注意：Kuikly 的 Text 不支持 padding，只能用 margin
+                                text("暂无标记")
+                                fontSize(12f)
+                                color(ctx.pal.textSub)
+                                marginTop(6f)
+                                marginBottom(6f)
+                            }
+                        }
+                    }
+                    vfor({ ctx.keyLevels }) { mark ->
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                paddingTop(7f)
+                                paddingBottom(7f)
+                            }
+                            View {
+                                attr {
+                                    width(8f)
+                                    height(8f)
+                                    borderRadius(4f)
+                                    backgroundColor(ctx.levelKindColor(mark.kind))
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text(StockFormat.price(mark.price) + "   " + mark.kind.label)
+                                    fontSize(13f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            // 同上：显式尺寸，避免 padding-only 视图点不中
+                            View {
+                                attr {
+                                    width(54f)
+                                    height(28f)
+                                    allCenter()
+                                }
+                                Text {
+                                    attr {
+                                        text("删除")
+                                        fontSize(12f)
+                                        color(ctx.pal.errRed)
+                                    }
+                                }
+                                event {
+                                    click { ctx.removeLevel(mark) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -752,7 +1023,30 @@ internal class StockDetailPage : BasePager() {
                             text("双指缩放 · 长按读数")
                             fontSize(11f)
                             color(ctx.pal.textSub)
+                            marginRight(10f)
+                        }
+                    }
+                    // 关键位入口：进面板可看已标记列表/删除，也可直接标记当前最新价。
+                    // ⚠️ 必须给显式 width/height：只靠 padding 撑开的 View 在真机上
+                    // 命中区域约等于文字本身，很容易点不中。
+                    View {
+                        attr {
+                            width(76f)
+                            height(26f)
+                            allCenter()
+                            borderRadius(9f)
+                            backgroundColor(ctx.pal.chipBg)
                             marginRight(16f)
+                        }
+                        Text {
+                            attr {
+                                text("关键位 " + ctx.keyLevels.size)
+                                fontSize(11f)
+                                color(ctx.pal.accent)
+                            }
+                        }
+                        event {
+                            click { ctx.openLevelPanel(null) }
                         }
                     }
                 }
@@ -801,13 +1095,11 @@ internal class StockDetailPage : BasePager() {
                             upColor = ctx.pal.up
                             downColor = ctx.pal.down
                             showVolume = true
-                            priceLevels = ctx.aiResult?.keyLevels?.map { lvl ->
-                                PriceLevel(
-                                    price = lvl.price.toFloat(),
-                                    label = lvl.label,
-                                    color = if (lvl.type == KeyLevel.TYPE_RESISTANCE) ctx.pal.up else ctx.pal.down
-                                )
-                            } ?: emptyList()
+                            // 用户手动标记的关键位 + AI 分析给出的关键位，合并画线
+                            priceLevels = ctx.buildPriceLevels()
+                            showMarkButton = true
+                            // 点画布内「＋标记」→ 带价格打开关键位面板（低频回调，不影响手势性能）
+                            onMarkRequest = { price -> ctx.openLevelPanel(price.toDouble()) }
                         }
                         event {
                             onDataPointClick = { _, idx, _ ->

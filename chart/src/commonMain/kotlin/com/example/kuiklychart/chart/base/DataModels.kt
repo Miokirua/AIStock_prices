@@ -75,5 +75,7 @@ data class PriceLevel(
     val price: Float,
     val label: String = "",
     val color: Color = Color(0xFFE6A23C),
-    val dashed: Boolean = false
+    val dashed: Boolean = false,
+    /** 线宽：用户手动标记的关键位用更粗的线，便于从 AI 给出的参考线里区分出来 */
+    val width: Float = 1f
 )

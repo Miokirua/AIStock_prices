@@ -88,4 +88,14 @@ class CandleStickChartAttr : BaseChartAttr() {
 
     /** 缩放后是否显示右上角「重置」按钮 */
     var showResetButton: Boolean by observable(true)
+
+    /**
+     * 是否显示右上角「＋标记」按钮。
+     * 点击后经 [onMarkRequest] 把当前价格回调给业务层（业务层负责弹类型选择/存库）。
+     * 价格取值：有十字光标时用该根收盘价，否则用最后一根收盘价。
+     */
+    var showMarkButton: Boolean by observable(true)
+
+    /** 「＋标记」按钮点击回调（价格单位与 [bars] 一致）。不设则不触发，按钮仍显示 */
+    var onMarkRequest: ((Float) -> Unit)? = null
 }

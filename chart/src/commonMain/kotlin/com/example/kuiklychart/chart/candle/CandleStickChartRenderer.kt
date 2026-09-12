@@ -113,7 +113,7 @@ class CandleStickChartRenderer(
         if (selection.pointIndex >= 0) {
             drawSelection(context, selection)
         }
-        drawRangeHint(context)
+        drawRangeHint(context, crosshairIndex)
         if (crosshairIndex in start until (start + count)) {
             drawCrosshair(context, crosshairIndex, locked)
         }
@@ -146,13 +146,29 @@ class CandleStickChartRenderer(
     /** 绘图区宽度（供手势换算） */
     fun plotWidth(): Float = area.width
 
-    /** 「重置缩放」按钮热区；仅在已缩放时返回非空 */
+    /** 右上角按钮行的纵向范围（画在绘图区上方） */
+    private fun chipTop(): Float = area.top - CHIP_H - 2f
+    private fun chipBottom(): Float = area.top - 2f
+
+    /** 「＋标记」按钮热区；有数据且开启时返回（始终显示，用于标记十字光标价/最新价） */
+    fun markChipRect(): ChartRect? {
+        if (!attr.interactive || !attr.showMarkButton) return null
+        if (total <= 0 || count <= 0) return null
+        return ChartRect(area.right - MARK_CHIP_W, chipTop(), area.right, chipBottom())
+    }
+
+    /** 点「＋标记」时要把哪个价格回调出去：十字光标优先，否则最后一根收盘价 */
+    fun markPrice(crosshairIndex: Int): Float {
+        val idx = if (crosshairIndex in attr.bars.indices) crosshairIndex else attr.bars.lastIndex
+        return attr.bars.getOrNull(idx)?.close ?: 0f
+    }
+
+    /** 「重置缩放」按钮热区；仅在已缩放时返回非空（排在「标记」左侧，避免重叠） */
     fun resetChipRect(): ChartRect? {
         if (!attr.interactive || !attr.showResetButton) return null
         if (total <= 0 || count >= total) return null
-        val w = 44f
-        val h = 16f
-        return ChartRect(area.right - w, area.top - h - 2f, area.right, area.top - 2f)
+        val right = area.right - (if (markChipRect() != null) MARK_CHIP_W + CHIP_GAP else 0f)
+        return ChartRect(right - RESET_CHIP_W, chipTop(), right, chipBottom())
     }
 
     // ==================== 私有绘制逻辑 ====================
@@ -184,8 +200,9 @@ class CandleStickChartRenderer(
             context.beginPath()
             context.moveTo(priceArea.left, y)
             context.lineTo(priceArea.right, y)
-            context.strokeStyle(color.opacity(0.75f))
-            context.lineWidth(1f)
+            // 线宽由数据决定：用户手动标记的关键位传更粗的 width，一眼能从 AI 参考线里认出来
+            context.strokeStyle(color.opacity(if (level.width > 1f) 0.95f else 0.75f))
+            context.lineWidth(level.width)
             context.stroke()
             context.restore()
             if (level.label.isNotBlank()) {
@@ -388,8 +405,8 @@ class CandleStickChartRenderer(
         }
     }
 
-    /** 左上角可见区间提示 + 右上角「重置」按钮 */
-    private fun drawRangeHint(context: CanvasContext) {
+    /** 左上角可见区间提示 + 右上角「＋标记」/「重置」按钮组 */
+    private fun drawRangeHint(context: CanvasContext, crosshairIndex: Int) {
         if (!attr.interactive) return
         val zoomed = count < total
         val first = attr.bars.getOrNull(start)?.date ?: ""
@@ -406,23 +423,39 @@ class CandleStickChartRenderer(
         context.fillText(rangeText, area.left, area.top - 4f)
         context.restore()
 
-        val rect = resetChipRect()
-        if (rect != null) {
-            context.save()
-            context.beginPath()
-            context.moveTo(rect.left, rect.top)
-            context.lineTo(rect.right, rect.top)
-            context.lineTo(rect.right, rect.bottom)
-            context.lineTo(rect.left, rect.bottom)
-            context.closePath()
-            context.fillStyle(attr.crosshairColor.opacity(0.9f))
-            context.fill()
-            context.font(9.5f)
-            context.textAlign(TextAlign.CENTER)
-            context.fillStyle(attr.crosshairPanelText)
-            context.fillText("重置", (rect.left + rect.right) / 2f, rect.bottom - 4f)
-            context.restore()
+        // 「＋标记」：始终显示。有十字光标时按钮文案带出价格（明确要标哪一个价位）
+        val markRect = markChipRect()
+        if (markRect != null) {
+            val onCross = crosshairIndex in start until (start + count)
+            drawChip(
+                context,
+                markRect,
+                if (onCross) "标记" + fmt2(markPrice(crosshairIndex)) else "标记最新价",
+                highlighted = onCross
+            )
         }
+        val resetRect = resetChipRect()
+        if (resetRect != null) {
+            drawChip(context, resetRect, "重置", highlighted = false)
+        }
+    }
+
+    /** 画一个右上角小按钮（实心圆角矩形 + 居中文字） */
+    private fun drawChip(context: CanvasContext, rect: ChartRect, text: String, highlighted: Boolean) {
+        context.save()
+        context.beginPath()
+        context.moveTo(rect.left, rect.top)
+        context.lineTo(rect.right, rect.top)
+        context.lineTo(rect.right, rect.bottom)
+        context.lineTo(rect.left, rect.bottom)
+        context.closePath()
+        context.fillStyle(attr.crosshairColor.opacity(if (highlighted) 1f else 0.9f))
+        context.fill()
+        context.font(9.5f)
+        context.textAlign(TextAlign.CENTER)
+        context.fillStyle(attr.crosshairPanelText)
+        context.fillText(text, (rect.left + rect.right) / 2f, rect.bottom - 4f)
+        context.restore()
     }
 
     private fun shortDate(date: String): String =
@@ -495,5 +528,16 @@ class CandleStickChartRenderer(
             context.fill()
             context.restore()
         }
+    }
+
+    private companion object {
+        /** 右上角按钮行高度 */
+        const val CHIP_H = 16f
+        /** 「＋标记」按钮宽度：需容纳「标记4.68」这种带价格的文案 */
+        const val MARK_CHIP_W = 62f
+        /** 「重置」按钮宽度 */
+        const val RESET_CHIP_W = 44f
+        /** 两个按钮之间的间距 */
+        const val CHIP_GAP = 6f
     }
 }

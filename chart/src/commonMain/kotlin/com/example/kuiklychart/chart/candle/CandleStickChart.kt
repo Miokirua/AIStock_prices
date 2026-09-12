@@ -43,7 +43,8 @@ import kotlin.math.sqrt
  * - 双击：在预设档位与「全部」之间循环
  * - 已缩放时单指水平拖动：平移可见窗口
  * - 未缩放时单指水平拖动 / 长按拖动：显示 OHLCV 数值浮标（长按后锁定，单击清除）
- * - 右上角「重置」：恢复全部
+ * - 右上角「＋标记」：把当前价（十字光标优先）经 `attr.onMarkRequest` 回调给业务层
+ * - 右上角「重置」：恢复全部（仅在已缩放时出现，排在「＋标记」左侧）
  *
  * **实现说明**：Android 渲染层（Kuikly 2.7.0）并未实现 `pinch` 事件，且 `pan` 会
  * `requestDisallowInterceptTouchEvent` 抢走父级 Scroller 的竖直滚动。因此这里统一走
@@ -101,6 +102,14 @@ class CandleStickChart : ComposeView<CandleStickChartAttr, BaseChartEvent>() {
                     click { p ->
                         if (!ctx.attr.interactive) {
                             ctx.handleTap(p.x, p.y)
+                            return@click
+                        }
+                        // 命中右上角「＋标记」：把当前价（有十字光标取该根收盘价）回调给业务层。
+                        // 必须在下面清十字光标之前判定并 return，否则读数会被一并清掉。
+                        val markRect = ctx.renderer().markChipRect()
+                        if (markRect != null && markRect.contains(p.x, p.y)) {
+                            val price = ctx.renderer().markPrice(ctx.crosshairIndex)
+                            if (price > 0f) ctx.attr.onMarkRequest?.invoke(price)
                             return@click
                         }
                         val rect = ctx.renderer().resetChipRect()
