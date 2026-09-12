@@ -20,9 +20,14 @@ kotlin {
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyOhosVersion()}")
                 // Markdown 渲染（AI 问答/结果页）：ohos 变体仅提供 2.0.21 版本，与鸿蒙工具链匹配
                 implementation("com.tencent.kuiklybase:KuiklyMarkdown:1.0.6-2.0.21-ohos")
-                // 注：主构建（build.gradle.kts）里的 kotlinx-coroutines / kotlinx-serialization 此处不加：
-                // ① 业务代码与 chart/table 均未直接使用（全仓 grep 无引用）；
-                // ② 官方与腾讯镜像均未发布这两个库的 ohosArm64 klib 变体，加了会直接依赖解析失败。
+                // ⚠️ KuiklyMarkdown 的 klib 内部 dependsOn 了 atomicfu / coroutines / serialization，
+                // 但它的发布元数据漏声明这些传递依赖（.module 里只有 kotlin-stdlib）→ 需在此显式补齐，
+                // 否则 KLIB resolver 报 "Could not find org.jetbrains.kotlinx:atomicfu-cinterop-interop"。
+                // 版本用腾讯镜像的鸿蒙适配版（-KBA / -kn 后缀，root module 含 ohosArm64 变体）。
+                implementation("org.jetbrains.kotlinx:atomicfu:0.24.2.5-kn")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:2.0.21-coroutines-KBA-001")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.1-KBA-003")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1-KBA-003")
                 implementation(project(":chart"))
                 implementation(project(":table"))
             }
