@@ -2579,34 +2579,56 @@ internal class StockListPage : BasePager() {
         else -> ""
     }
 
+    /**
+     * 估算引导卡描述文本在给定卡宽下的行数。
+     *
+     * 13sp 字号下：全角（中文/标点「」＋）按 1 字宽 ≈ 13dp 计，ASCII（空格、`/`、`sh600519`）按 0.55 字宽计。
+     * 只用于卡片「放孔上方还是下方」的定位判断与 minHeight 下限，**不用于裁剪**
+     * —— 卡片实际高度由内容撑开（见 [guideCard] 用 minHeight 而非 height）。
+     */
+    private fun guideDescLines(desc: String, cardW: Float): Int {
+        if (desc.isBlank()) return 1
+        var weight = 0f
+        for (ch in desc) weight += if (ch.code < 128) 0.55f else 1f
+        val perLine = ((cardW - 36f) / 13f).coerceAtLeast(4f)
+        val n = weight / perLine
+        val lines = n.toInt() + if (n > n.toInt() + 1e-4f) 1 else 0
+        return lines.coerceIn(1, 8)
+    }
+
     /** 引导说明卡（定位在目标孔下方，孔位于屏幕下半部分时改放上方） */
     private fun guideCard(): ViewBuilder {
         val ctx = this
         return {
             // 说明卡紧跟高亮孔：孔下方放得下就放孔下方，否则放孔上方。
             // 用根容器实际尺寸做基准（pageViewHeight 可能含状态栏导致基准偏移）。
-            // 卡片高度需要容纳 title(16sp) + desc(13sp×2) + button 40f + padding(18×2) ≈ 180f
+            //
+            // ⚠️ v1.9.32：**不能给卡片设固定 height**。步骤 2/3 的 desc 有 60~80 字，13sp 下要占 3~4 行，
+            // 固定 180f 会把 desc 末行和「下一步」按钮一起裁掉（v1.9.31 的「引导 2、3 显示不全」）。
+            // 改为 minHeight（≈ 非 desc 部分 122f + 行数×20f）：高度随内容撑开，估算值只当下限与定位依据。
             // 关键：cardTop/rectY/rectH 等求值必须在 attr lambda 内部读 observable，
             // 否则和 mask 子 view 一样的"lambda 外 val 中断响应式订阅"问题。
-            val cardH = 180f
             View {
                 attr {
                     val rectY = ctx.guideRect.y.coerceAtLeast(0f)
                     val rectH = ctx.guideRect.height.coerceAtLeast(0f)
                     val screenH = ctx.guideScreenH()
                     val cardW = ctx.guideScreenW() - 32f
+                    // 非 desc 部分：padding(18×2) + title 行 22 + desc 上间距 8 + 按钮行上间距 16 + 按钮 40
+                    val cardH = 122f + ctx.guideDescLines(ctx.guideDesc, cardW) * 20f
                     val below = rectY + rectH + cardH + 12f <= screenH
                     val cardTop = if (below) {
                         rectY + rectH + 12f
                     } else {
                         (rectY - cardH - 12f).coerceAtLeast(8f)
-                    }
+                    // 再兜一次屏幕下边界：孔太靠下时避免卡片尾巴出屏
+                    }.coerceAtMost((screenH - cardH - 8f).coerceAtLeast(8f))
                     absolutePosition(
                         top = cardTop,
                         left = 16f
                     )
                     width(cardW)
-                    height(cardH)
+                    minHeight(cardH)
                     zIndex(150)
                     borderRadius(14f)
                     backgroundColor(ctx.pal.card)
