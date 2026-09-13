@@ -11,8 +11,8 @@
 | HarmonyOS | 宿主与构建链路已打通（共享层出 `libshared.so` + 桥接 / 路由 / 主题 / 入口） |
 
 ## 预览
-<img width="873" height="1920" alt="a43ea2fd7d899ce6228d2b427daeaa39_720" src="https://github.com/user-attachments/assets/5e0025a7-d7af-4a52-bb17-450aca69995e" /><img width="873" height="1920" alt="0836360a99c46011e19aa9ad7a95ccc8_720" src="https://github.com/user-attachments/assets/40437611-0fc3-431c-833c-6f0fe9b5596a" /><img width="873" height="1920" alt="b75a800f6f3811b39c8455c07e7e9462_720" src="https://github.com/user-attachments/assets/58576401-f039-4386-aafa-918e38ea7741" />
-<img width="873" height="1920" alt="8dfcb1161879288c9b0d688c72a2e9cf_720" src="https://github.com/user-attachments/assets/76bd1bae-d634-4300-841a-195a3e3e723e" /><img width="873" height="1920" alt="ea796c54e043acf48a12151da71cd256" src="https://github.com/user-attachments/assets/bdb28276-6ae5-4dc5-9203-b8c0eac03ab3" /><img width="873" height="1920" alt="607754e60357a5216ab7d711fe2644d3" src="https://github.com/user-attachments/assets/26eb77be-76a9-4770-947c-031bacf86433" />
+<img width="1146" height="845" alt="4a5fd8a42b3018486b219988d83307fa" src="https://github.com/user-attachments/assets/546a5e19-00ee-4c2b-ad88-817cb4d2a69e" />
+<img width="1149" height="848" alt="2b9debd9c7ceeb4cf6f5a6b4fc724afb" src="https://github.com/user-attachments/assets/e452ec1b-3993-4e2b-b4f8-380339e86cdc" />
 
 ## 演示视频
 
