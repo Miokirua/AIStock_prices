@@ -106,12 +106,21 @@
             // 键盘顶部在 self.view 坐标系里的 y
             CGRect viewInScreen = [self.view convertRect:self.view.bounds toView:nil];
             CGFloat keyboardTopInView = kbEndFrame.origin.y - viewInScreen.origin.y;
-            // 输入框底部在 self.view 坐标系里的 y
+            // 输入框在 self.view 坐标系里的 frame
             CGRect responderFrame = [responder convertRect:responder.bounds toView:self.view];
-            CGFloat responderBottom = CGRectGetMaxY(responderFrame);
-            static CGFloat const kGap = 12.0; // 输入框与键盘顶部的间距
-            if (responderBottom + kGap > keyboardTopInView) {
-                offset = responderBottom + kGap - keyboardTopInView;
+            // 底部固定输入框（AI 问答的输入框贴在页面底端）：Kotlin 侧已监听 keyboardHeightChange
+            // 给输入区加底部 margin 实现「内容收缩」，宿主侧不再整体 transform 上移——否则会双重避让，
+            // 且整页上移会把顶部标题栏顶出屏幕。这里按「输入框顶部位于页面下半部」跳过。
+            BOOL isBottomInput = CGRectGetMinY(responderFrame) > self.view.bounds.size.height * 0.7f;
+            if (isBottomInput) {
+                offset = 0;
+            } else {
+                // 弹窗/表单等居中输入框：按输入框底部露出键盘顶部计算上移量
+                CGFloat responderBottom = CGRectGetMaxY(responderFrame);
+                static CGFloat const kGap = 12.0; // 输入框与键盘顶部的间距
+                if (responderBottom + kGap > keyboardTopInView) {
+                    offset = responderBottom + kGap - keyboardTopInView;
+                }
             }
         }
     }

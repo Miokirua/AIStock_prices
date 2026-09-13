@@ -106,6 +106,8 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var tipMsgVisible by observable(false)
 
     private var chatInputRef: ViewRef<InputView>? = null
+    /** iOS 键盘高度（keyboardHeightChange 回传）：键盘弹出时给输入区加底部 margin，实现内容收缩 */
+    private var keyboardHeight by observable(0f)
     /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     /** 挂起的「滚到底」请求：内容/视口尚未完成布局时保留，等 contentSizeChanged 回调后补做 */
@@ -1152,6 +1154,10 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                     paddingRight(12f)
                     backgroundColor(ctx.pal.card)
                     border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
+                    // iOS：键盘弹出时给输入区加底部 margin，让整条输入区贴到键盘上方、消息区 flex 收缩；
+                    // 顶部会话栏保持不动，避免宿主层整页 transform 上移把标题栏顶出屏幕。
+                    // Android 走 adjustResize（window 收缩），这里保持 0 避免双重避让。
+                    if (ctx.pagerData.isIOS) marginBottom(ctx.keyboardHeight)
                 }
                 View {
                     attr {
@@ -1180,6 +1186,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                         }
                         event {
                             textDidChange { ctx.inputText = it.text }
+                            // iOS 键盘避让：键盘弹出时记录高度，输入区据此加底部 margin 实现内容收缩
+                            // （Android 走宿主 adjustResize，无需处理；宿主层对底部输入框也不再 transform 上移）
+                            keyboardHeightChange { ctx.keyboardHeight = it.height }
                         }
                     }
                 }
