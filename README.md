@@ -8,7 +8,14 @@
 | --------- | ------------------------------------------------------------------------------ |
 | Android   | **已真机验证**（当前 v1.9.35，APK 可构建安装）                                                |
 | iOS       | 宿主已适配，**已通过 GitHub Actions（macos-14）编译验证**，模拟器 Debug 包可构建              |
-| HarmonyOS | 宿主与构建链路已打通（共享层出 `libshared.so` + 桥接 / 路由 / 主题 / 入口）；**仅支持 arm64 真机**，模拟器为 x86_64 不可用 |
+| HarmonyOS | 宿主与构建链路已打通（共享层出 `libshared.so` + 桥接 / 路由 / 主题 / 入口） |
+
+## 预览
+<img width="1146" height="845" alt="4a5fd8a42b3018486b219988d83307fa" src="https://github.com/user-attachments/assets/546a5e19-00ee-4c2b-ad88-817cb4d2a69e" />
+<img width="1149" height="848" alt="2b9debd9c7ceeb4cf6f5a6b4fc724afb" src="https://github.com/user-attachments/assets/e452ec1b-3993-4e2b-b4f8-380339e86cdc" />
+
+## 演示视频
+
 
 ## 功能特性
 
