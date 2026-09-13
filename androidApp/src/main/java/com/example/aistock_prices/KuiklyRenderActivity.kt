@@ -5,9 +5,12 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import androidx.appcompat.app.AppCompatActivity
 import com.tencent.kuikly.core.render.android.IKuiklyRenderExport
 import com.tencent.kuikly.core.render.android.adapter.KuiklyRenderAdapterManager
@@ -74,6 +77,69 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
                 hrContainerView.setPadding(0, 0, 0, target)
             }
         }
+    }
+
+    /**
+     * 点击输入框以外的区域收起键盘：
+     * Kuikly 渲染层不会在点击空白时主动收键盘（只有业务显式调 Input.blur() 才会），
+     * 键盘弹出后会一直停留在屏幕上遮住下方内容，用户会以为「点哪都没反应」。
+     * 这里在事件分发的最前端拦截（早于所有子 View，滚动列表内部也覆盖得到）：
+     * 按下时若存在聚焦中的输入框、且落点不在任何输入框内，则清焦点并隐藏输入法。
+     * 清焦点会触发 KRTextFieldView 的 onFocusChanged，行为与 Kuikly 官方 blur() 一致。
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            dismissKeyboardOnTouchOutside(ev)
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun dismissKeyboardOnTouchOutside(ev: MotionEvent) {
+        if (!::hrContainerView.isInitialized) return
+        val root: View = window.decorView
+        // 落点在任意输入框内（含正在编辑的这个）都放行：点击输入框应保持/进入编辑态
+        if (isTouchInsideEditText(root, ev)) return
+        val focused = findFocusedEditText(root)
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        // 拿不到聚焦框（如渲染层刚清了焦点）时用容器 token 兜底，保证键盘一定收起
+        val token = (focused ?: hrContainerView).windowToken
+        focused?.clearFocus()
+        // ⚠️ 必须延迟再隐藏：与 Kuikly 渲染层 KRTextFieldView.setBlur() 的做法一致
+        // （clearFocus() 后 post 再 hideSoftInput）。同步隐藏时渲染层会在同一帧把键盘弹回来，
+        // 表现为「收键盘时灵时不灵」。用 post 保证在渲染层的焦点处理之后执行。
+        hrContainerView.post { imm?.hideSoftInputFromWindow(token, 0) }
+    }
+
+    /** 递归查找当前聚焦且可见的输入框（Kuikly 的 Input/TextArea 都是 EditText 子类） */
+    private fun findFocusedEditText(view: View): EditText? {
+        if (view is EditText) {
+            return if (view.isFocused && view.isShown) view else null
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                findFocusedEditText(view.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /** 触摸点是否落在某个可见输入框的可见区域内（坐标为屏幕绝对值，与 rawX/rawY 同一坐标系） */
+    private fun isTouchInsideEditText(view: View, ev: MotionEvent): Boolean {
+        if (view is EditText) {
+            if (view.isShown) {
+                val rect = Rect()
+                if (view.getGlobalVisibleRect(rect) &&
+                    rect.contains(ev.rawX.toInt(), ev.rawY.toInt())
+                ) {
+                    return true
+                }
+            }
+        } else if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                if (isTouchInsideEditText(view.getChildAt(i), ev)) return true
+            }
+        }
+        return false
     }
 
     override fun onDestroy() {
