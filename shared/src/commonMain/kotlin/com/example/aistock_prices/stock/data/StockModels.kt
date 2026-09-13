@@ -45,7 +45,7 @@ data class MinutePoint(
     val amount: Double  // 元
 )
 
-/** 日K线 */
+/** K线（日/周/月共用同一结构，volume 单位为手） */
 data class KLineBar(
     val date: String,
     val open: Double,
@@ -54,6 +54,22 @@ data class KLineBar(
     val low: Double,
     val volume: Long // 手
 )
+
+/**
+ * K线周期。
+ *
+ * 腾讯 `fqkline` 接口的 param 第二位就是周期，回包数组字段名为 `qfq` + 周期
+ * （实测：`qfqday` / `qfqweek` / `qfqmonth`）。三种周期的日期格式一致（`yyyy-MM-dd`），
+ * 成交量同样可能是浮点串（`"187025.000"`），故解析逻辑无需区分周期。
+ */
+enum class KLinePeriod(val param: String, val label: String, val title: String) {
+    DAY("day", "日K", "日K线"),
+    WEEK("week", "周K", "周K线"),
+    MONTH("month", "月K", "月K线");
+
+    /** 回包中承载数据的数组字段名 */
+    val responseKey: String get() = "qfq$param"
+}
 
 /** 内置默认自选股（首次启动展示，用户可增删） */
 object Watchlist {

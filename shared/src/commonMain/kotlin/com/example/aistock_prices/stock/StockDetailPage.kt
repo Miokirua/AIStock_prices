@@ -12,6 +12,7 @@ import com.example.aistock_prices.stock.ai.KeyLevel
 import com.example.aistock_prices.stock.ai.MetricInsight
 import com.example.aistock_prices.stock.data.AddLevelResult
 import com.example.aistock_prices.stock.data.KLineBar
+import com.example.aistock_prices.stock.data.KLinePeriod
 import com.example.aistock_prices.stock.data.KeyLevelMark
 import com.example.aistock_prices.stock.data.LevelKind
 import com.example.aistock_prices.stock.data.LevelStore
@@ -63,6 +64,8 @@ internal class StockDetailPage : BasePager() {
     private var quote by observable<StockQuote?>(null)
     private var minutePoints by observableList<MinutePoint>()
     private var klineBars by observableList<KLineBar>()
+    /** 当前 K 线周期（日/周/月），切换后重新拉取并按周期读写缓存 */
+    private var klinePeriod by observable(KLinePeriod.DAY)
     private var loading by observable(true)
     private var errorMsg by observable("")
     private var aiResult by observable<AiAnalysisResult?>(null)
@@ -617,12 +620,31 @@ internal class StockDetailPage : BasePager() {
         }
         // 3. 拉取最新数据（成功后会解除超时兜底）
         refreshQuoteAndMinute()
-        // 4. 日K线（独立加载，失败不影响其他区域）
-        StockRepository.fetchKLine(network, stockCode, 60) { bars ->
+        // 4. K线（独立加载，失败不影响其他区域）；周期跟随 [klinePeriod]
+        StockRepository.fetchKLine(network, stockCode, 60, klinePeriod) { bars ->
             klineBars.clear()
             klineBars.addAll(bars)
-            StockCache.saveKLine(sp, stockCode, bars)
+            StockCache.saveKLine(sp, stockCode, bars, klinePeriod)
             maybeRunAutoAnalyze()
+        }
+    }
+
+    /**
+     * 切换 K 线周期：先清空再用该周期的缓存顶上（避免展示上一个周期的数据），再拉新数据。
+     * 不触发 AI 重分析 —— 分析基于日K与实时行情，切周期只是看图口径变化。
+     */
+    private fun switchKlinePeriod(period: KLinePeriod) {
+        if (klinePeriod == period) return
+        klinePeriod = period
+        selectedKlineIndex = -1
+        klineBars.clear()
+        val cached = StockCache.loadKLine(sp, stockCode, period)
+        if (cached.isNotEmpty()) klineBars.addAll(cached)
+        StockRepository.fetchKLine(network, stockCode, 60, period) { bars ->
+            if (bars.isEmpty()) return@fetchKLine
+            klineBars.clear()
+            klineBars.addAll(bars)
+            StockCache.saveKLine(sp, stockCode, bars, period)
         }
     }
 
@@ -630,7 +652,7 @@ internal class StockDetailPage : BasePager() {
     private fun applyCache() {
         val cachedQuote = StockCache.loadQuotes(sp).firstOrNull { it.code == stockCode }
         val cachedMinute = StockCache.loadMinute(sp, stockCode)
-        val cachedKLine = StockCache.loadKLine(sp, stockCode)
+        val cachedKLine = StockCache.loadKLine(sp, stockCode, klinePeriod)
         if (cachedQuote != null) quote = cachedQuote
         if (cachedMinute.isNotEmpty()) {
             minutePoints.clear()
@@ -799,6 +821,24 @@ internal class StockDetailPage : BasePager() {
                         ctx.quickItem("最高", StockFormat.price(q.high)).invoke(this)
                         ctx.quickItem("最低", StockFormat.price(q.low)).invoke(this)
                         ctx.quickItem("昨收", StockFormat.price(q.prevClose)).invoke(this)
+                    }
+                    // 行情时间：接口给的行情时间（非本机刷新时刻）。
+                    // 收盘后 / 周末看到的会是最近一个交易日的收市时间，据此可判断数据新旧。
+                    vif({ ctx.quoteTimeLabel(q.time).isNotEmpty() }) {
+                        View {
+                            attr {
+                                marginTop(8f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                            }
+                            Text {
+                                attr {
+                                    text(ctx.quoteTimeLabel(q.time))
+                                    fontSize(11f)
+                                    color(ctx.pal.textSub)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -998,6 +1038,34 @@ internal class StockDetailPage : BasePager() {
     }
 
     /** 日K线图 */
+    /** K 线周期切换 chip（日K / 周K / 月K） */
+    private fun periodChip(period: KLinePeriod): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    // 显式尺寸：只靠 padding 撑开的 View 在真机上命中区域约等于文字本身
+                    width(48f)
+                    height(26f)
+                    allCenter()
+                    borderRadius(13f)
+                    backgroundColor(if (ctx.klinePeriod == period) ctx.pal.accent else ctx.pal.chipBg)
+                    marginRight(8f)
+                }
+                Text {
+                    attr {
+                        text(period.label)
+                        fontSize(12f)
+                        color(if (ctx.klinePeriod == period) ctx.pal.onAccent else ctx.pal.textSub)
+                    }
+                }
+                event {
+                    click { ctx.switchKlinePeriod(period) }
+                }
+            }
+        }
+    }
+
     private fun klineChartCard(): ViewBuilder {
         val ctx = this
         val pageWidth = pagerData.pageViewWidth
@@ -1017,7 +1085,7 @@ internal class StockDetailPage : BasePager() {
                     }
                     Text {
                         attr {
-                            text("日K线")
+                            text("K线")
                             fontSize(15f)
                             fontWeightSemiBold()
                             color(ctx.pal.textMain)
@@ -1060,6 +1128,18 @@ internal class StockDetailPage : BasePager() {
                             click { ctx.openLevelPanel(null) }
                         }
                     }
+                }
+                // 周期切换：日 / 周 / 月。同一接口换 param 第二位即可，回包字段名随之变化
+                View {
+                    attr {
+                        flexDirectionRow()
+                        alignItemsCenter()
+                        paddingLeft(16f)
+                        marginBottom(8f)
+                    }
+                    ctx.periodChip(KLinePeriod.DAY).invoke(this)
+                    ctx.periodChip(KLinePeriod.WEEK).invoke(this)
+                    ctx.periodChip(KLinePeriod.MONTH).invoke(this)
                 }
                 // 就地功能提示：这一块的手势与关键位怎么用（首次进详情页显示，点「知道了」后不再出现）
                 vif({ ctx.tipChartVisible }) {
@@ -1878,6 +1958,15 @@ internal class StockDetailPage : BasePager() {
     }
 
     /** 分时点时间格式：HHmm → HH:mm（HHmm/HHmmss 兼容） */
+    /**
+     * 「行情 MM-dd HH:mm」标签（时间字段为 `yyyyMMddHHmmss`）。
+     * 字段缺失时返回空串，调用方用 vif 隐藏整行。
+     */
+    private fun quoteTimeLabel(time: String): String {
+        val t = StockFormat.quoteTime(time)
+        return if (t.isEmpty()) "" else "行情 $t"
+    }
+
     private fun formatMinuteTime(time: String): String {
         return when (time.length) {
             4 -> "${time.substring(0, 2)}:${time.substring(2, 4)}"

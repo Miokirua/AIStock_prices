@@ -5,6 +5,7 @@ import com.example.aistock_prices.base.bridgeModule
 import com.example.aistock_prices.base.setTimeout
 import com.example.aistock_prices.stock.ai.AiChatView
 import com.example.aistock_prices.stock.ai.AiConfigView
+import com.example.aistock_prices.stock.data.BackupStore
 import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockMeta
 import com.example.aistock_prices.stock.data.StockQuote
@@ -61,6 +62,10 @@ internal class StockListPage : BasePager() {
     private var errorMsg by observable("")
     private var refreshText by observable("下拉刷新")
     private var lastUpdated by observable("")
+    /** 当前展示的行情是否来自本地缓存（用于在时间标签上标注「缓存」） */
+    private var fromCache by observable(false)
+    /** 行情时间标签：行情时间（来自接口）+ 是否缓存 / 本地刷新时刻 */
+    private var freshness by observable("")
     private var currentTab by observable(0)
     private var showAddDialog by observable(false)
     /** 顶栏「三条横杠」下拉菜单 */
@@ -70,6 +75,12 @@ internal class StockListPage : BasePager() {
     private var pendingRemove by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
+    /** 备份与恢复弹窗（导出到剪贴板 / 粘贴恢复） */
+    private var showBackupDialog by observable(false)
+    private var backupInput by observable("")
+    private var backupInputRef: ViewRef<InputView>? = null
+    /** 弹窗里展示的本机数据覆盖面，导出前让用户知道会带走什么 */
+    private var backupSummary by observable("")
     private var refreshRef: ViewRef<RefreshView>? = null
     private var pollTimerRef = ""
     /** AI 问答 Tab 的内联视图引用（设置页返回时刷新配置态） */
@@ -138,6 +149,7 @@ internal class StockListPage : BasePager() {
     private var menuAddRef: ViewRef<DivView>? = null
     private var menuThemeRef: ViewRef<DivView>? = null
     private var menuAiRef: ViewRef<DivView>? = null
+    private var menuBackupRef: ViewRef<DivView>? = null
     private var menuGuideRef: ViewRef<DivView>? = null
 
     /** 左滑操作条宽度（置顶 72f + 删除 72f） */
@@ -409,6 +421,49 @@ internal class StockListPage : BasePager() {
                                 backgroundColor(ctx.pal.chip2Bg)
                             }
                         }
+                        // 备份与恢复
+                        View {
+                            ref { ctx.menuBackupRef = it }
+                            attr {
+                                padding(14f)
+                                paddingLeft(16f)
+                                paddingRight(16f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                            }
+                            Text {
+                                attr {
+                                    text("⇄")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                    width(26f)
+                                    textAlignCenter()
+                                    marginRight(8f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text("备份与恢复")
+                                    fontSize(15f)
+                                    color(ctx.pal.textMain)
+                                }
+                            }
+                            event {
+                                click {
+                                    ctx.showMenu = false
+                                    ctx.openBackupDialog()
+                                }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(1f)
+                                marginLeft(16f)
+                                marginRight(16f)
+                                backgroundColor(ctx.pal.chip2Bg)
+                            }
+                        }
                         // 功能说明：重新观看引导
                         View {
                             ref { ctx.menuGuideRef = it }
@@ -623,6 +678,177 @@ internal class StockListPage : BasePager() {
                                     }
                                     event {
                                         click { ctx.addStock() }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- 备份与恢复弹窗 ----------
+            // 导出走剪贴板（三端宿主早已实现 copyToPasteboard），导入靠粘贴。
+            // 全程 commonMain，不需要为读写剪贴板新增任何宿主接口。
+            vif({ ctx.showBackupDialog }) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.showBackupDialog = false }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                padding(20f)
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("备份与恢复")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.textMain)
+                                    marginBottom(6f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("本机数据：${ctx.backupSummary}")
+                                    fontSize(12f)
+                                    color(ctx.pal.textSub)
+                                    marginBottom(14f)
+                                }
+                            }
+                            View {
+                                attr {
+                                    height(42f)
+                                    borderRadius(21f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.accent)
+                                }
+                                Text {
+                                    attr {
+                                        text("复制备份到剪贴板")
+                                        fontSize(14f)
+                                        fontWeightSemiBold()
+                                        color(ctx.pal.onAccent)
+                                    }
+                                }
+                                event {
+                                    click { ctx.doExportBackup() }
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("备份是一段文本，复制后请粘贴保存到备忘录 / 聊天记录等地方。")
+                                    fontSize(11f)
+                                    color(ctx.pal.textSub)
+                                    marginTop(8f)
+                                    marginBottom(12f)
+                                }
+                            }
+                            View {
+                                attr {
+                                    height(1f)
+                                    backgroundColor(ctx.pal.divider)
+                                    marginBottom(12f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("恢复：把备份内容粘贴到下方，再点「导入」")
+                                    fontSize(12f)
+                                    color(ctx.pal.textMain)
+                                    marginBottom(8f)
+                                }
+                            }
+                            View {
+                                attr {
+                                    height(96f)
+                                    borderRadius(8f)
+                                    backgroundColor(ctx.pal.chipBg)
+                                    padding(10f)
+                                }
+                                Input {
+                                    ref { ctx.backupInputRef = it }
+                                    attr {
+                                        flex(1f)
+                                        // 多行粘贴框：不能设 maxTextLength，否则备份会被截断
+                                        height(76f)
+                                        lines(4)
+                                        fontSize(12f)
+                                        color(ctx.pal.textMain)
+                                        placeholder("在此粘贴备份内容")
+                                        placeholderColor(ctx.pal.textSub)
+                                    }
+                                    event {
+                                        textDidChange { ctx.backupInput = it.text }
+                                    }
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("导入会覆盖本机现有的自选、关键位与 AI 会话")
+                                    fontSize(11f)
+                                    color(ctx.pal.errRed)
+                                    marginTop(8f)
+                                    marginBottom(12f)
+                                }
+                            }
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        backgroundColor(ctx.pal.chip2Bg)
+                                        marginRight(12f)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("清空")
+                                            fontSize(14f)
+                                            color(ctx.pal.textSub)
+                                        }
+                                    }
+                                    event {
+                                        click {
+                                            ctx.backupInput = ""
+                                            ctx.backupInputRef?.view?.setText("")
+                                        }
+                                    }
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        // ⚠️ 覆盖式恢复属破坏性操作，按项目约定用 pal.up（红）
+                                        backgroundColor(ctx.pal.up)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("导入")
+                                            fontSize(14f)
+                                            fontWeightSemiBold()
+                                            color(ctx.pal.onAccent)
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.doImportBackup() }
                                     }
                                 }
                             }
@@ -1053,7 +1279,7 @@ internal class StockListPage : BasePager() {
                                 }
                             }
                         }
-                        vif({ ctx.lastUpdated.isNotEmpty() && ctx.quotes.isNotEmpty() }) {
+                        vif({ ctx.freshness.isNotEmpty() && ctx.quotes.isNotEmpty() }) {
                             View {
                                 attr {
                                     height(28f)
@@ -1062,7 +1288,7 @@ internal class StockListPage : BasePager() {
                                 }
                                 Text {
                                     attr {
-                                        text("更新于 ${ctx.lastUpdated}")
+                                        text(ctx.freshness)
                                         fontSize(11f)
                                         color(ctx.pal.textSub)
                                     }
@@ -1131,6 +1357,7 @@ internal class StockListPage : BasePager() {
         // 1. 缓存优先展示（接口临时失效时页面不空白）
         val cached = StockCache.loadQuotes(sp)
         if (cached.isNotEmpty()) {
+            fromCache = true
             replaceQuotes(cached)
             loading = false
         }
@@ -1142,6 +1369,7 @@ internal class StockListPage : BasePager() {
     private fun fetchQuotes(metas: List<StockMeta>) {
         StockRepository.fetchQuotes(network, metas.map { it.code }) { list ->
             if (list.isNotEmpty()) {
+                fromCache = false
                 replaceQuotes(list)
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
@@ -1167,6 +1395,7 @@ internal class StockListPage : BasePager() {
         val metas = Watchlist.stocks(sp)
         StockRepository.fetchQuotes(network, metas.map { it.code }) { list ->
             if (list.isNotEmpty()) {
+                fromCache = false
                 replaceQuotes(list)
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
@@ -1177,10 +1406,79 @@ internal class StockListPage : BasePager() {
         }
     }
 
-    /** 记录最近一次刷新成功时间（用于列表顶部「更新于 HH:mm:ss」反馈） */
+    /** 记录最近一次刷新成功时刻（本机时钟，用于「HH:mm 刷新」反馈） */
     private fun markUpdated() {
         val ts = bridgeModule.currentTimeStamp()
-        lastUpdated = if (ts > 0) bridgeModule.dateFormatter(ts, "HH:mm:ss") else ""
+        lastUpdated = if (ts > 0) bridgeModule.dateFormatter(ts, "HH:mm") else ""
+        updateFreshness()
+    }
+
+    /**
+     * 刷新列表顶部的行情时间标签。
+     *
+     * ⚠️ 展示的是**接口给的行情时间**（`q.time`），不是本机刷新时刻 —— 收盘后或周末，
+     * 本机怎么刷新行情时间都停在最近一个交易日，这正是判断「数据新旧 / 是不是缓存」的依据。
+     */
+    private fun updateFreshness() {
+        val t = quotes.firstOrNull { it.time.length >= 12 }?.time?.let { StockFormat.quoteTime(it) }.orEmpty()
+        freshness = when {
+            t.isEmpty() -> ""
+            fromCache -> "行情 $t · 缓存"
+            lastUpdated.isEmpty() -> "行情 $t"
+            else -> "行情 $t · $lastUpdated 刷新"
+        }
+    }
+
+    // ==================== 备份 / 恢复 ====================
+
+    /** 打开备份弹窗：先把本机数据覆盖面算出来展示，让用户知道会带走什么 */
+    private fun openBackupDialog() {
+        val codes = Watchlist.stocks(sp).map { it.code }
+        backupSummary = BackupStore.summarize(sp, codes).text
+        backupInput = ""
+        backupInputRef?.view?.setText("")
+        showBackupDialog = true
+    }
+
+    /** 导出：生成备份文本并复制到剪贴板（三端宿主已实现 copyToPasteboard） */
+    private fun doExportBackup() {
+        val text = BackupStore.exportText(sp, Watchlist.stocks(sp).map { it.code })
+        bridgeModule.copyToPasteboard(text)
+        bridgeModule.toast("备份已复制（${text.length} 字符），请粘贴保存")
+        showBackupDialog = false
+    }
+
+    /** 导入：覆盖式恢复，成功后重载页面（分组、行情、AI 会话） */
+    private fun doImportBackup() {
+        if (backupInput.isBlank()) {
+            bridgeModule.toast("请先把备份内容粘贴到输入框")
+            return
+        }
+        when (val r = BackupStore.importText(sp, backupInput, Watchlist.stocks(sp).map { it.code })) {
+            is BackupStore.ImportResult.Ok -> {
+                showBackupDialog = false
+                reloadAfterRestore()
+                bridgeModule.toast("已恢复：${r.summary.text}")
+            }
+            BackupStore.ImportResult.BadFormat ->
+                bridgeModule.toast("内容不是本 App 的备份，请确认粘贴完整")
+            BackupStore.ImportResult.Empty ->
+                bridgeModule.toast("备份内容为空，无需恢复")
+        }
+    }
+
+    /**
+     * 恢复后重载页面状态。
+     * ⚠️ [activeGroup] 必须重置回「全部」：备份里的分组可能与本机不同，
+     * 停留在已不存在的分组名上会导致列表恒空。
+     */
+    private fun reloadAfterRestore() {
+        activeGroup = Watchlist.GROUP_ALL
+        moveSheetQuote = null
+        groupMenuName = null
+        reloadGroups()
+        loadData()
+        chatView?.reload()
     }
 
     /** 置顶/取消置顶后按 Watchlist 顺序本地重排（不发网络请求） */
@@ -1205,6 +1503,7 @@ internal class StockListPage : BasePager() {
     private fun replaceQuotes(list: List<StockQuote>) {
         allQuotes = list.toList()
         applyFilterAndSort()
+        updateFreshness()
     }
 
     /** 按 [activeGroup] 过滤 [allQuotes]，再套用置顶 + 排序，写回 quotes（vfor 数据源） */
@@ -2612,7 +2911,7 @@ internal class StockListPage : BasePager() {
         setTimeout(80) { applyGuideRect(step) }
         setTimeout(200) { applyGuideRect(step) }
         // 菜单面板首次打开 layout 完成偏慢（vif 触发子视图创建），再补一次兜底
-        if (step in 7..10) setTimeout(500) { applyGuideRect(step) }
+        if (step in 7..11) setTimeout(500) { applyGuideRect(step) }
     }
 
     /** 引导根容器有效宽度（布局完成前 fallback 到 pageView 尺寸） */
@@ -2674,11 +2973,13 @@ internal class StockListPage : BasePager() {
             5 -> Frame((w - 100f).coerceAtLeast(0f), sb + 15f, 50f, 26f)
             // 顶栏「☰」：paddingLeft(8)+"☰" 20sp+paddingRight(4)≈38dp，距右 4dp
             6 -> Frame((w - 42f).coerceAtLeast(0f), sb + 9f, 38f, 38f)
-            // 菜单面板 4 项：全宽行（菜单卡 left=0/right=0，项行占满整卡宽）
+            // 菜单面板 5 项：全宽行（菜单卡 left=0/right=0，项行占满整卡宽）
+            // 顺序与菜单实际渲染顺序一致：添加自选股 / 夜间模式 / AI 设置 / 备份与恢复 / 功能说明
             7 -> Frame(0f, menuY, w, itemH)
             8 -> Frame(0f, menuY + itemStep, w, itemH)
             9 -> Frame(0f, menuY + 2f * itemStep, w, itemH)
             10 -> Frame(0f, menuY + 3f * itemStep, w, itemH)
+            11 -> Frame(0f, menuY + 4f * itemStep, w, itemH)
             else -> Frame(16f, sb + 80f, w - 32f, 120f)
         }
     }
@@ -2723,7 +3024,8 @@ internal class StockListPage : BasePager() {
         7 -> "添加自选股"
         8 -> if (isNightMode()) "日间模式" else "夜间模式"
         9 -> "AI 设置"
-        10 -> "功能说明"
+        10 -> "备份与恢复"
+        11 -> "功能说明"
         else -> ""
     }
 
@@ -2736,11 +3038,13 @@ internal class StockListPage : BasePager() {
         4 -> "切到「AI 问答」，可与 AI 多轮讨论任意股票，回复会附带实时行情卡片。" +
             "长按任意消息可复制、引用追问、重新生成或删除。"
         5 -> "点右上角「刷新」，或直接下拉列表，即可手动拉取最新行情。"
-        6 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置与使用帮助都从这里进入。"
+        6 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置、备份与使用帮助都从这里进入。"
         7 -> "输入股票代码即可添加自选，例如 sh600519 贵州茅台；在某个分组里添加会自动归入该组。"
         8 -> "一键切换深色 / 浅色外观，右侧小字显示当前档位。"
         9 -> "在此配置 AI 服务（Base URL / Key / 模型），行情分析与问答共用。"
-        10 -> "以后想重温这段引导、或再看一次各页面的功能提示，随时点这里即可。点「完成」结束引导。"
+        10 -> "把自选、分组、关键位与 AI 会话导出成一段文本，粘贴到备忘录保存；" +
+            "换机或重装后把这段文本粘回来，点「导入」即可恢复。"
+        11 -> "以后想重温这段引导、或再看一次各页面的功能提示，随时点这里即可。点「完成」结束引导。"
         else -> ""
     }
 
@@ -2887,9 +3191,9 @@ internal class StockListPage : BasePager() {
 
         /** 引导版本号：内容有新增时就升一档，老用户在菜单「功能说明」上会看到「有新内容」角标 */
         private const val KEY_GUIDE_VER = "guide_intro_ver"
-        private const val GUIDE_VER = "2"
+        private const val GUIDE_VER = "3"
 
         /** 引导总步数（1..GUIDE_LAST_STEP）；卡片右侧「N/总步数」与「完成」判定都用它 */
-        private const val GUIDE_LAST_STEP = 10
+        private const val GUIDE_LAST_STEP = 11
     }
 }

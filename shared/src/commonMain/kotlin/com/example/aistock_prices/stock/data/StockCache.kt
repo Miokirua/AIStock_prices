@@ -109,9 +109,22 @@ object StockCache {
         }
     }
 
-    // ==================== 日K线 ====================
+    // ==================== K线（按周期分别缓存） ====================
 
-    fun saveKLine(sp: SharedPreferencesModule, code: String, bars: List<KLineBar>) {
+    /**
+     * K 线缓存键。日K沿用旧键（`cache_kline_<code>`）以兼容已落盘的缓存，
+     * 周/月K追加周期后缀，避免切周期时读到另一个周期的数据。
+     */
+    private fun klineKey(code: String, period: KLinePeriod): String =
+        if (period == KLinePeriod.DAY) KEY_KLINE_PREFIX + code
+        else KEY_KLINE_PREFIX + code + "_" + period.param
+
+    fun saveKLine(
+        sp: SharedPreferencesModule,
+        code: String,
+        bars: List<KLineBar>,
+        period: KLinePeriod = KLinePeriod.DAY
+    ) {
         val arr = JSONArray()
         bars.forEach { b ->
             arr.put(
@@ -125,11 +138,15 @@ object StockCache {
                 }
             )
         }
-        sp.setItem(KEY_KLINE_PREFIX + code, JSONObject().apply { put("list", arr) }.toString())
+        sp.setItem(klineKey(code, period), JSONObject().apply { put("list", arr) }.toString())
     }
 
-    fun loadKLine(sp: SharedPreferencesModule, code: String): List<KLineBar> {
-        val raw = sp.getItem(KEY_KLINE_PREFIX + code)
+    fun loadKLine(
+        sp: SharedPreferencesModule,
+        code: String,
+        period: KLinePeriod = KLinePeriod.DAY
+    ): List<KLineBar> {
+        val raw = sp.getItem(klineKey(code, period))
         if (raw.isBlank()) return emptyList()
         return try {
             val arr = JSONObject(raw).optJSONArray("list") ?: return emptyList()

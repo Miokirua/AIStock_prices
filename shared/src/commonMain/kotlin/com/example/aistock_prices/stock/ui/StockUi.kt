@@ -44,6 +44,17 @@ object StockFormat {
         }
     }
 
+    /**
+     * 行情时间：接口字段为 `yyyyMMddHHmmss`（如 `20260911161500`），输出 `MM-dd HH:mm`。
+     * 长度不足或含非数字（字段缺失/异常）时返回空串，调用方据此隐藏整行。
+     */
+    fun quoteTime(raw: String): String {
+        if (raw.length < 12) return ""
+        for (c in raw) if (!c.isDigit()) return ""
+        return "${raw.substring(4, 6)}-${raw.substring(6, 8)} " +
+            "${raw.substring(8, 10)}:${raw.substring(10, 12)}"
+    }
+
     private fun format2(v: Double): String {
         val neg = v < 0
         val scaled = round(abs(v) * 100).toLong()

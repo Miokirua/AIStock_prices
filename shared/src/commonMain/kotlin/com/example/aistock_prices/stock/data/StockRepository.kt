@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
  * - 实时行情：https://qt.gtimg.cn/utf8/q=sh600519,sz000001 （非 JSON 文本，~ 分隔，字段见 parseQuote；utf8 路径返回 UTF-8，中文名称不乱码）
  * - 分时数据：https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600519 （JSON）
  * - 日K线：  https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,60,qfq （JSON）
+ *           param 第二位换 week / month 即为周K / 月K，回包字段名相应为 qfqweek / qfqmonth
  *
  * 所有回包均走 Kuikly NetworkModule；非 JSON 回包会被框架包装为 {data:"原始文本"}。
  */
@@ -61,16 +62,24 @@ object StockRepository {
         }
     }
 
-    /** 拉取日K线（count 根，前复权） */
-    fun fetchKLine(network: NetworkModule, code: String, count: Int = 60, callback: (List<KLineBar>) -> Unit) {
-        val param = JSONObject().apply { put("param", "$code,day,,,$count,qfq") }
+    /** 拉取 K 线（count 根，前复权）。[period] 支持日/周/月 */
+    fun fetchKLine(
+        network: NetworkModule,
+        code: String,
+        count: Int = 60,
+        period: KLinePeriod = KLinePeriod.DAY,
+        callback: (List<KLineBar>) -> Unit
+    ) {
+        val param = JSONObject().apply { put("param", "$code,${period.param},,,$count,qfq") }
         network.requestGet(KLINE_URL, param) { data, success, _, _ ->
             if (!success) {
                 callback(emptyList())
                 return@requestGet
             }
             val stock = data.optJSONObject("data")?.optJSONObject(code)
-            val arr = stock?.optJSONArray("qfqday")
+            // 实测字段名带 qfq 前缀（qfqday / qfqweek / qfqmonth）；
+            // 兜底不加前缀的 day/week/month，接口若调整命名也不至于整块空白
+            val arr = stock?.optJSONArray(period.responseKey) ?: stock?.optJSONArray(period.param)
             val bars = mutableListOf<KLineBar>()
             if (arr != null) {
                 for (i in 0 until arr.length()) {
