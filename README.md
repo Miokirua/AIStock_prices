@@ -15,8 +15,8 @@
 <img width="1149" height="848" alt="2b9debd9c7ceeb4cf6f5a6b4fc724afb" src="https://github.com/user-attachments/assets/e452ec1b-3993-4e2b-b4f8-380339e86cdc" />
 
 ## 演示视频
-https://github.com/Miokirua/AIStock_prices/blob/main/%E6%BC%94%E7%A4%BA%E8%A7%86%E9%A2%911.mp4
-https://github.com/Miokirua/AIStock_prices/blob/main/%E6%BC%94%E7%A4%BA%E8%A7%86%E9%A2%912.mp4
+[演示视频1](演示视频1.mp4)
+[演示视频2](演示视频2.mp4)
 
 ## 功能特性
 
