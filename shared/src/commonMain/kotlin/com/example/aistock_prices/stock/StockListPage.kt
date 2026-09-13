@@ -1859,7 +1859,7 @@ internal class StockListPage : BasePager() {
                 Text {
                     attr {
                         val n = ctx.countOf(filter)
-                        text(if (n > 0) "$label $n" else label)
+                        text(if (n > 0) "$label | $n" else label)
                         fontSize(12f)
                         fontWeightSemiBold()
                         color(if (ctx.activeGroup == filter) ctx.pal.onAccent else ctx.pal.textMain)
