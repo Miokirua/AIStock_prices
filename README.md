@@ -68,7 +68,7 @@
 ## 技术栈
 
 - **框架**：[Kuikly](https://github.com/Tencent-TDS/KuiklyUI)（Kuikly DSL）+ Kotlin Multiplatform
-- **平台**：业务代码全部位于 `shared/commonMain`；Android 已真机验证，iOS / HarmonyOS 宿主已适配，H5 / 小程序未适配
+- **平台**：业务代码全部位于 `shared/commonMain`；Android 已真机验证，iOS / HarmonyOS 宿主已适配
 - **行情数据**：腾讯免费行情接口（实时报价 / 分时 / K 线，前复权）+ 搜索联想接口
 - **AI 服务**：OpenAI 兼容 `chat/completions` 协议，任意服务商
 - **构建**：Gradle 8.5 · AGP 8.2.2 · Kotlin 2.1.21 · Kuikly 2.7.0
