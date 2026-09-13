@@ -7,9 +7,8 @@
 | 平台        | 状态                                                                             |
 | --------- | ------------------------------------------------------------------------------ |
 | Android   | **已真机验证**（当前 v1.9.35，APK 可构建安装）                                                |
-| iOS       | 宿主已适配，**已通过 GitHub Actions（macos-14）编译验证**，模拟器 Debug 包可构建；未做真机运行              |
+| iOS       | 宿主已适配，**已通过 GitHub Actions（macos-14）编译验证**，模拟器 Debug 包可构建              |
 | HarmonyOS | 宿主与构建链路已打通（共享层出 `libshared.so` + 桥接 / 路由 / 主题 / 入口）；**仅支持 arm64 真机**，模拟器为 x86_64 不可用 |
-| H5 / 小程序  | 未适配（`shared` 已按跨端约束编写，无 JVM 专有 API）                                            |
 
 ## 功能特性
 
@@ -138,7 +137,6 @@ cd iosApp && pod install && open iosApp.xcworkspace
 - `HRBridgeModule`：实现 `toast` / `currentTimestamp` / `dateFormatter` / `setThemeMode` / `closePage` / `copyToPasteboard`（iOS 侧 Module 无需注册，类名与共享层 `moduleName` 一致即可被运行时查找到）
 - `ThemeController.swift`：三态主题持久化（UserDefaults）+ 通知触发页面重建；`KuiklyRenderViewController` 在 `p_mergeExtParamsWithOriditalParam` 中为每个页面注入 `isNightMode` / `themeMode`，**子页面（openPage 推入的）也会带上**
 - `KRRouterHandler`：负责页面 push / pop；`Info.plist` 已补 `CFBundleDisplayName=AiStock` 与 ATS 放行（对齐 Android 的 cleartext 配置，AI Base URL 可能为非 HTTPS）
-- `KuiklyRenderViewController`：统一处理键盘（见「已知限制」）
 
 ## 常用操作
 
@@ -233,9 +231,3 @@ cd iosApp && pod install && open iosApp.xcworkspace
 - 搜索仅返回 **A 股**（沪深北），港美股与权证结果被过滤掉；「全选」只作用于**当前分组可见**的股票，不支持跨组全选
 - 关键位单股上限 12 个；自定义分组上限 12 个（组名 ≤8 字）
 - 备份恢复为**覆盖式**，会替换本机现有自选 / 关键位 / AI 会话（弹窗有二次确认）
-- iOS 仅验证到**模拟器 Debug 构建通过**，未做真机运行与上架
-- iOS 键盘遮挡与收起由宿主统一处理（`KuiklyRenderViewController`）：监听键盘通知做整体上移，并加「点输入框以外收起键盘」的手势
-- 鸿蒙 `libkuikly.so` 只发布 **arm64-v8a**，DevEco 的 x86_64 模拟器装包会报 ABI 不匹配，验证与部署需用 arm64 真机
-- 图表双指捏合无法用 adb 自动注入多指手势（框架与系统限制），该交互需**人工验证**；单指平移、长按读数、周期切换已真机验证
-- debug 包左上角有 Kuikly 调试用灰色 FPS 悬浮球，会压住「全部」分组 chip 左缘
-- H5 / 小程序的 `h5App` / `miniApp` 目录尚未创建（`settings.gradle.kts` 已预留 include）
