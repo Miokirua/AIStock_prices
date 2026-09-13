@@ -131,6 +131,19 @@ internal class StockListPage : BasePager() {
     private var groupInput by observable("")
     private var groupInputRef: ViewRef<InputView>? = null
 
+    // ==================== 标签 / 备注（v1.9.37） ====================
+    /** 编辑标签/备注弹窗当前操作的股票（null = 不显示） */
+    private var tagNoteQuote by observable<StockQuote?>(null)
+    private var tagInput by observable("")
+    private var noteInput by observable("")
+    private var tagInputRef: ViewRef<InputView>? = null
+    private var noteInputRef: ViewRef<InputView>? = null
+    /**
+     * 标签/备注写入计数器：列表行的 tag chip 与 note 摘要是按需读 SP 判断的，而 SP 不是响应式的
+     * ——在 attr 里读一下这个 observable，就能在保存后驱动相关行重新求值（同 addTick 机制）。
+     */
+    private var metaTick by observable(0)
+
     // ==================== 批量多选（v1.9.35） ====================
     /**
      * 是否处于批量多选态。
@@ -1157,6 +1170,11 @@ internal class StockListPage : BasePager() {
                 ctx.groupSortSheet().invoke(this)
             }
 
+            // ---------- 标签 / 备注编辑弹窗（v1.9.37） ----------
+            vif({ ctx.tagNoteQuote != null }) {
+                ctx.tagNoteDialog().invoke(this)
+            }
+
             // ---------- 批量多选浮层（v1.9.35） ----------
             vif({ ctx.showBatchMove }) {
                 ctx.batchMoveSheet().invoke(this)
@@ -1669,6 +1687,7 @@ internal class StockListPage : BasePager() {
         activeGroup = Watchlist.GROUP_ALL
         moveSheetQuote = null
         groupMenuName = null
+        tagNoteQuote = null
         // 恢复后整份自选都换了，多选里记的 code 可能已不存在
         exitSelectMode()
         reloadGroups()
@@ -1984,8 +2003,50 @@ internal class StockListPage : BasePager() {
                                     ctx.moveTargetRow(quote, name, name).invoke(this)
                                 }
                             }
-                            // 分隔线 + 批量选择入口：以当前这只为起点进入多选态。
+                            // 分隔线 + 标签/备注入口 + 批量选择入口。
                             // 放在分组列表下方，与「把这一只移到某组」区分开，不会误触。
+                            View {
+                                attr {
+                                    height(1f)
+                                    marginLeft(20f)
+                                    marginRight(20f)
+                                    backgroundColor(ctx.pal.divider)
+                                }
+                            }
+                            // 备注：单股编辑入口
+                            View {
+                                attr {
+                                    height(46f)
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingLeft(20f)
+                                    paddingRight(20f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("备注")
+                                        fontSize(14f)
+                                        color(ctx.pal.accent)
+                                    }
+                                }
+                                // 已有内容时显示摘要，提示用户此股已打标
+                                val preview = Watchlist.notePreview(ctx.sp, quote.code)
+                                val hasTag = Watchlist.metaOf(ctx.sp, quote.code)?.tag?.isNotBlank() == true
+                                if (hasTag || preview.isNotEmpty()) {
+                                    Text {
+                                        attr {
+                                            text(Watchlist.metaOf(ctx.sp, quote.code)?.tag?.takeIf { it.isNotBlank() }
+                                                ?: preview)
+                                            fontSize(12f)
+                                            color(ctx.pal.textSub)
+                                        }
+                                    }
+                                }
+                                event {
+                                    click { ctx.openTagNoteDialog(quote) }
+                                }
+                            }
                             View {
                                 attr {
                                     height(1f)
@@ -2055,6 +2116,252 @@ internal class StockListPage : BasePager() {
                 }
                 event {
                     click { ctx.doMoveToGroup(quote, filter) }
+                }
+            }
+        }
+    }
+
+    // ==================== 标签 / 备注（v1.9.37） ====================
+
+    /** 打开标签/备注编辑弹窗：预填当前值，并关掉「移动到分组」浮层 */
+    private fun openTagNoteDialog(quote: StockQuote) {
+        val meta = Watchlist.metaOf(sp, quote.code)
+        val tag = meta?.tag ?: ""
+        val note = meta?.note ?: ""
+        tagInput = tag
+        noteInput = note
+        moveSheetQuote = null
+        tagNoteQuote = quote
+        // 预填旧值：Input 的显示值要显式 setText（attr 里的初始 text 不会同步，
+        // 同 groupDialog 重命名弹窗的写法）
+        setTimeout(0) {
+            if (tagNoteQuote?.code == quote.code) {
+                tagInputRef?.view?.setText(tag)
+                noteInputRef?.view?.setText(note)
+            }
+        }
+    }
+
+    private fun closeTagNoteDialog() {
+        tagNoteQuote = null
+    }
+
+    /** 保存标签/备注：规范化后一次落盘，再触发列表行重新求值 */
+    private fun confirmTagNoteDialog() {
+        val quote = tagNoteQuote ?: return
+        val tag = Watchlist.normalizeTag(tagInput)
+        val note = Watchlist.normalizeNote(noteInput)
+        if (!Watchlist.updateTagNote(sp, quote.code, tag, note)) {
+            bridgeModule.toast("${quote.name} 已不在自选")
+            tagNoteQuote = null
+            return
+        }
+        metaTick++
+        tagNoteQuote = null
+        bridgeModule.toast(
+            when {
+                tag.isNotEmpty() && note.isNotEmpty() -> "已保存标签与备注"
+                tag.isNotEmpty() -> "已保存标签「$tag」"
+                note.isNotEmpty() -> "已保存备注"
+                else -> "已清空标签与备注"
+            }
+        )
+    }
+
+    /** 清除标签与备注：仅在已有内容时由弹窗里的「清除」入口触发 */
+    private fun clearTagNoteDialog() {
+        val quote = tagNoteQuote ?: return
+        if (!Watchlist.updateTagNote(sp, quote.code, "", "")) {
+            bridgeModule.toast("${quote.name} 已不在自选")
+            tagNoteQuote = null
+            return
+        }
+        metaTick++
+        tagNoteQuote = null
+        bridgeModule.toast("已清除")
+    }
+
+    /** 标签/备注编辑弹窗 */
+    private fun tagNoteDialog(): ViewBuilder {
+        val ctx = this
+        return {
+            val quote = ctx.tagNoteQuote
+            if (quote != null) {
+                Modal {
+                    View {
+                        attr {
+                            flex(1f)
+                            allCenter()
+                            backgroundColor(ctx.pal.maskFull)
+                        }
+                        event {
+                            click { ctx.closeTagNoteDialog() }
+                        }
+                        View {
+                            attr {
+                                width(ctx.pagerData.pageViewWidth - 60f)
+                                borderRadius(12f)
+                                backgroundColor(ctx.pal.card)
+                                padding(20f)
+                            }
+                            event {
+                                click { }
+                            }
+                            Text {
+                                attr {
+                                    text("备注")
+                                    fontSize(16f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.textMain)
+                                    marginBottom(4f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text(quote.name)
+                                    fontSize(12f)
+                                    color(ctx.pal.textSub)
+                                    marginBottom(14f)
+                                }
+                            }
+                            // 标签（单行）
+                            View {
+                                attr {
+                                    height(44f)
+                                    borderRadius(8f)
+                                    backgroundColor(ctx.pal.chipBg)
+                                    paddingLeft(12f)
+                                    paddingRight(12f)
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                }
+                                Input {
+                                    ref { ctx.tagInputRef = it }
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        fontSize(14f)
+                                        color(ctx.pal.textMain)
+                                        placeholder("标签（可选），如：持仓 / 观察 / 龙头")
+                                        placeholderColor(ctx.pal.textSub)
+                                        maxTextLength(Watchlist.MAX_TAG_LEN)
+                                    }
+                                    event {
+                                        textDidChange { ctx.tagInput = it.text }
+                                    }
+                                }
+                            }
+                            // 备注（多行）
+                            View {
+                                attr {
+                                    height(96f)
+                                    borderRadius(8f)
+                                    backgroundColor(ctx.pal.chipBg)
+                                    padding(10f)
+                                    marginTop(12f)
+                                }
+                                Input {
+                                    ref { ctx.noteInputRef = it }
+                                    attr {
+                                        flex(1f)
+                                        height(76f)
+                                        lines(4)
+                                        fontSize(12f)
+                                        color(ctx.pal.textMain)
+                                        placeholder("备注（可选），如：财报超预期，回调可关注")
+                                        placeholderColor(ctx.pal.textSub)
+                                        maxTextLength(Watchlist.MAX_NOTE_LEN)
+                                    }
+                                    event {
+                                        textDidChange { ctx.noteInput = it.text }
+                                    }
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("标签最多 ${Watchlist.MAX_TAG_LEN} 字，备注最多 ${Watchlist.MAX_NOTE_LEN} 字")
+                                    fontSize(11f)
+                                    color(ctx.pal.textSub)
+                                    marginTop(8f)
+                                }
+                            }
+                            // 「清除」入口：仅当该股已有标签或备注时显示，一键清空
+                            val hasExisting = Watchlist.metaOf(ctx.sp, quote.code)?.let { it.tag.isNotBlank() || it.note.isNotBlank() } == true
+                            if (hasExisting) {
+                                View {
+                                    attr {
+                                        flexDirectionRow()
+                                        justifyContentFlexEnd()
+                                        marginTop(8f)
+                                    }
+                                    View {
+                                        attr {
+                                            paddingTop(6f)
+                                            paddingBottom(6f)
+                                            paddingLeft(12f)
+                                            paddingRight(12f)
+                                        }
+                                        Text {
+                                            attr {
+                                                text("清除")
+                                                fontSize(13f)
+                                                color(ctx.pal.errRed)
+                                            }
+                                        }
+                                        event {
+                                            click { ctx.clearTagNoteDialog() }
+                                        }
+                                    }
+                                }
+                            }
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    marginTop(16f)
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        backgroundColor(ctx.pal.chip2Bg)
+                                        marginRight(12f)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("取消")
+                                            fontSize(14f)
+                                            color(ctx.pal.textSub)
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.closeTagNoteDialog() }
+                                    }
+                                }
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(40f)
+                                        borderRadius(20f)
+                                        allCenter()
+                                        backgroundColor(ctx.pal.accent)
+                                    }
+                                    Text {
+                                        attr {
+                                            text("保存")
+                                            fontSize(14f)
+                                            color(ctx.pal.onAccent)
+                                            fontWeightSemiBold()
+                                        }
+                                    }
+                                    event {
+                                        click { ctx.confirmTagNoteDialog() }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3357,10 +3664,34 @@ internal class StockListPage : BasePager() {
                                     }
                                 }
                             }
+                            // 自定义标签 chip（v1.9.37）：读 metaTick 建立依赖，保存后自动刷新
+                            vif({ ctx.metaTick >= 0 && Watchlist.metaOf(ctx.sp, quote.code)?.tag?.isNotBlank() == true }) {
+                                View {
+                                    attr {
+                                        marginLeft(6f)
+                                        paddingTop(2f)
+                                        paddingBottom(2f)
+                                        paddingLeft(6f)
+                                        paddingRight(6f)
+                                        borderRadius(4f)
+                                        backgroundColor(ctx.pal.accentChipBg)
+                                    }
+                                    Text {
+                                        attr {
+                                            val t = if (ctx.metaTick >= 0) (Watchlist.metaOf(ctx.sp, quote.code)?.tag ?: "") else ""
+                                            text(t)
+                                            fontSize(10f)
+                                            color(ctx.pal.accent)
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Text {
                             attr {
-                                text(quote.symbol)
+                                // 备注摘要跟在代码后；读 metaTick 建立依赖，保存后自动刷新
+                                val note = if (ctx.metaTick >= 0) Watchlist.notePreview(ctx.sp, quote.code) else ""
+                                text(if (note.isNotEmpty()) "${quote.symbol} · $note" else quote.symbol)
                                 fontSize(12f)
                                 color(ctx.pal.textSub)
                                 marginTop(4f)

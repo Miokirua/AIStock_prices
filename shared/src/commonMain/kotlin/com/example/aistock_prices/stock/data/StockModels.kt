@@ -10,7 +10,11 @@ data class StockMeta(
     val name: String,   // 本地维护的中文名称
     val pinned: Boolean = false, // 是否置顶（置顶项排在最前）
     /** 所属分组名；空串表示「未分组」（老数据无该字段时也落到空串，无需迁移） */
-    val group: String = ""
+    val group: String = "",
+    /** 用户自定义标签（短文本，显示为名称旁的小 chip；空串 = 无） */
+    val tag: String = "",
+    /** 用户自定义备注（长文本，列表只显示摘要，完整内容在编辑弹窗查看；空串 = 无） */
+    val note: String = ""
 ) {
     val symbol: String get() = code.removePrefix("sh").removePrefix("sz").removePrefix("hk")
 }
@@ -167,6 +171,15 @@ object Watchlist {
 
     /** 未分组的展示名（内部仍用空串表示） */
     const val GROUP_NONE_LABEL = "未分组"
+
+    /** 标签长度上限（显示为名称旁的小 chip，太长会撑破行） */
+    const val MAX_TAG_LEN = 8
+
+    /** 备注长度上限（长文本，列表只显示摘要） */
+    const val MAX_NOTE_LEN = 100
+
+    /** 列表行里备注摘要的截断长度（超出补「…」，完整内容在编辑弹窗） */
+    const val NOTE_PREVIEW_LEN = 10
 
     /**
      * 规范化用户输入的分组名：折叠内部空白 + 截断超长。
@@ -361,6 +374,8 @@ object Watchlist {
                     put("name", meta.name)
                     put("pinned", meta.pinned)
                     put("group", meta.group)
+                    put("tag", meta.tag)
+                    put("note", meta.note)
                 }
             )
         }
@@ -379,7 +394,9 @@ object Watchlist {
                     code = code,
                     name = o.optString("name").ifBlank { code },
                     pinned = o.optBoolean("pinned") ?: false,
-                    group = o.optString("group") ?: ""
+                    group = o.optString("group") ?: "",
+                    tag = o.optString("tag") ?: "",
+                    note = o.optString("note") ?: ""
                 )
             }
         } catch (e: Throwable) {
@@ -404,5 +421,52 @@ object Watchlist {
 
     fun nameOf(code: String): String {
         return defaults.firstOrNull { it.code == code }?.name ?: code
+    }
+
+    // ---------------- 标签 / 备注（v1.9.37） ----------------
+    // 标签（短 chip）与备注（长文本）都挂在 StockMeta 上，随自选一起序列化，
+    // 天然进入 watchlist_stocks 备份、删除自选时一并清理、分组/置顶等 copy 操作不丢。
+
+    /** 按 code 取元数据（不存在返回 null） */
+    fun metaOf(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, code: String): StockMeta? {
+        return stocks(sp).firstOrNull { it.code == code }
+    }
+
+    /** 规范化标签：折叠空白 + 截断超长；返回空串表示非法 */
+    fun normalizeTag(raw: String): String {
+        val t = raw.trim().replace(Regex("\\s+"), " ")
+        if (t.isEmpty()) return ""
+        return if (t.length > MAX_TAG_LEN) t.substring(0, MAX_TAG_LEN) else t
+    }
+
+    /** 规范化备注：只去首尾空白 + 截断超长（内部空白与换行保留） */
+    fun normalizeNote(raw: String): String {
+        val n = raw.trim()
+        if (n.isEmpty()) return ""
+        return if (n.length > MAX_NOTE_LEN) n.substring(0, MAX_NOTE_LEN) else n
+    }
+
+    /** 列表行里展示的备注摘要（超长截断补「…」，空备注返回空串） */
+    fun notePreview(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, code: String): String {
+        val note = metaOf(sp, code)?.note ?: ""
+        if (note.isEmpty()) return ""
+        return if (note.length > NOTE_PREVIEW_LEN) note.substring(0, NOTE_PREVIEW_LEN) + "…" else note
+    }
+
+    /**
+     * 更新某只股票的标签与备注（一次读写落盘）。
+     * 入参已经过 [normalizeTag] / [normalizeNote] 规范化；返回 false 表示股票不存在。
+     */
+    fun updateTagNote(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        code: String,
+        tag: String,
+        note: String
+    ): Boolean {
+        val list = stocks(sp)
+        val target = list.firstOrNull { it.code == code } ?: return false
+        if (target.tag == tag && target.note == note) return true // 无变化也视为成功
+        save(sp, list.map { if (it.code == code) it.copy(tag = tag, note = note) else it })
+        return true
     }
 }
