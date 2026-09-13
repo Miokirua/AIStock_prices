@@ -18,6 +18,10 @@ object StockRepository {
     private const val QUOTE_URL = "https://qt.gtimg.cn/utf8/q="
     private const val MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
     private const val KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    private const val SEARCH_URL = "https://proxy.finance.qq.com/ifzqgtimg/appstock/smartbox/search/get"
+
+    /** 本站只做 A 股，搜索结果里港股 / 美股 / 权证等一律过滤掉 */
+    private val A_SHARE_MARKETS = setOf("sh", "sz", "bj")
 
     /** 批量拉取实时行情 */
     fun fetchQuotes(network: NetworkModule, codes: List<String>, callback: (List<StockQuote>) -> Unit) {
@@ -90,6 +94,86 @@ object StockRepository {
             }
             callback(bars)
         }
+    }
+
+    /**
+     * 按关键词搜索股票（中文名 / 拼音 / 代码均可）。
+     *
+     * 接口是腾讯行情页的搜索联想（smartbox），回包 `data.stock` 为二维数组：
+     * `[market, code, name, pinyin, type]`，如 `["sh","600519","贵州茅台","","GP-A"]`。
+     * 实测 `pinyin` 恒为空串故不使用；`type` 形如 `GP-A`（主板）/ `GP-A-CYB`（创业板）/
+     * `GP-A-KCB`（科创板），`GP` 则是港美股 —— 只保留 A 股可交易标的。
+     *
+     * ⚠️ 关键词必须 URL 编码：接口靠 query 传参，中文直接拼进 URL 会失败。见 [percentEncode]。
+     */
+    fun searchStocks(
+        network: NetworkModule,
+        keyword: String,
+        callback: (List<StockSearchItem>) -> Unit
+    ) {
+        val kw = keyword.trim()
+        if (kw.isEmpty()) {
+            callback(emptyList())
+            return
+        }
+        network.requestGet(SEARCH_URL + "?q=" + percentEncode(kw), JSONObject()) { data, success, _, _ ->
+            if (!success) {
+                callback(emptyList())
+                return@requestGet
+            }
+            val arr = data.optJSONObject("data")?.optJSONArray("stock")
+            val result = mutableListOf<StockSearchItem>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val row = arr.optJSONArray(i) ?: continue
+                    val market = row.optString(0) ?: continue
+                    val symbol = row.optString(1) ?: continue
+                    val name = row.optString(2) ?: continue
+                    val type = row.optString(4) ?: ""
+                    if (market !in A_SHARE_MARKETS) continue
+                    // A 股标的 type 以 GP 开头；权证（QZ）、基金（JJ）等一并排除
+                    if (!type.startsWith("GP")) continue
+                    if (symbol.isBlank() || name.isBlank()) continue
+                    result.add(StockSearchItem(market + symbol, name, marketLabel(market, type)))
+                }
+            }
+            callback(result)
+        }
+    }
+
+    /** 由 market + type 推导用户可读的市场标注 */
+    private fun marketLabel(market: String, type: String): String = when {
+        type.contains("CYB") -> "创业板"
+        type.contains("KCB") -> "科创板"
+        market == "bj" -> "北交所"
+        market == "sh" -> "沪A"
+        market == "sz" -> "深A"
+        else -> market
+    }
+
+    /**
+     * UTF-8 百分号编码。
+     *
+     * commonMain 里拿不到 `java.net.URLEncoder`，而 Kuikly 自带的 `BridgeModule.urlEncode`
+     * 依赖宿主实现（本仓库 iOS `HRBridgeModule.m` 是空壳，三端未必都有）——所以自己按字节编码。
+     * 只放行 RFC 3986 的 unreserved 字符，其余（含中文的多字节 UTF-8）逐字节转 `%XX`。
+     */
+    private fun percentEncode(raw: String): String {
+        val hex = "0123456789ABCDEF"
+        val sb = StringBuilder()
+        for (b in raw.encodeToByteArray()) {
+            val v = b.toInt() and 0xFF
+            val ch = v.toChar()
+            // ⚠️ 必须先判 v < 128：高位字节 toChar() 后是 Latin-1 字符，isLetterOrDigit() 会误判为 true
+            if (v < 128 && (ch.isLetterOrDigit() || ch == '-' || ch == '_' || ch == '.' || ch == '~')) {
+                sb.append(ch)
+            } else {
+                sb.append('%')
+                sb.append(hex[v shr 4])
+                sb.append(hex[v and 0x0F])
+            }
+        }
+        return sb.toString()
     }
 
     // ---------------- 解析 ----------------

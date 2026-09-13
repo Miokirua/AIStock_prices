@@ -71,6 +71,24 @@ enum class KLinePeriod(val param: String, val label: String, val title: String) 
     val responseKey: String get() = "qfq$param"
 }
 
+/**
+ * 搜索结果项（腾讯 smartbox suggest 接口）。
+ *
+ * 接口回包的 `data.stock` 是二维数组，每项形如 `["sh","600519","贵州茅台","","GP-A"]`
+ * （market / code / name / pinyin / type），其中 pinyin 实测恒为空串，故不纳入模型。
+ *
+ * [marketLabel] 是给用户看的简短市场标注，由 market + type 推导
+ * （type 的取值形如 `GP-A` / `GP-A-CYB` / `GP-A-KCB`）。
+ */
+data class StockSearchItem(
+    val code: String,        // 带市场前缀的腾讯代码，如 sh600519
+    val name: String,        // 股票名称
+    val marketLabel: String  // 沪A / 深A / 创业板 / 科创板 / 北交所
+) {
+    /** 纯数字代码，如 600519 */
+    val symbol: String get() = code.removePrefix("sh").removePrefix("sz").removePrefix("bj")
+}
+
 /** 内置默认自选股（首次启动展示，用户可增删） */
 object Watchlist {
     private const val KEY_STOCKS = "watchlist_stocks"
@@ -262,6 +280,63 @@ object Watchlist {
     /** 统计各分组的股票数（key 为空串表示未分组），供 chip 上显示数量 */
     fun groupCounts(sp: com.tencent.kuikly.core.module.SharedPreferencesModule): Map<String, Int> {
         return stocks(sp).groupingBy { it.group }.eachCount()
+    }
+
+    // ---------------- 批量操作（v1.9.35 多选态） ----------------
+    // 三个方法都只做一次读写落盘（对多选集合做集合运算后整体覆盖），
+    // 避免在循环里反复调用 stocks()/save() 造成 N 次 SP 读写。
+
+    /** 批量删除，返回实际删除的数量 */
+    fun removeAll(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        codes: Collection<String>
+    ): Int {
+        if (codes.isEmpty()) return 0
+        val targets = codes.toSet()
+        val list = stocks(sp)
+        val kept = list.filter { it.code !in targets }
+        val removed = list.size - kept.size
+        if (removed > 0) save(sp, kept)
+        return removed
+    }
+
+    /** 批量置顶 / 取消置顶，返回是否发生了实际变更 */
+    fun pinAll(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        codes: Collection<String>,
+        pinned: Boolean
+    ): Boolean {
+        if (codes.isEmpty()) return false
+        val targets = codes.toSet()
+        var changed = false
+        val list = stocks(sp).map {
+            if (it.code in targets && it.pinned != pinned) {
+                changed = true
+                it.copy(pinned = pinned)
+            } else it
+        }
+        if (changed) save(sp, list)
+        return changed
+    }
+
+    /** 批量移动到分组（空串 = 未分组），返回实际变更的数量 */
+    fun moveAllToGroup(
+        sp: com.tencent.kuikly.core.module.SharedPreferencesModule,
+        codes: Collection<String>,
+        group: String
+    ): Int {
+        if (codes.isEmpty()) return 0
+        if (group.isNotEmpty() && group !in groups(sp)) return 0
+        val targets = codes.toSet()
+        var changed = 0
+        val list = stocks(sp).map {
+            if (it.code in targets && it.group != group) {
+                changed++
+                it.copy(group = group)
+            } else it
+        }
+        if (changed > 0) save(sp, list)
+        return changed
     }
 
     private fun saveGroups(sp: com.tencent.kuikly.core.module.SharedPreferencesModule, list: List<String>) {

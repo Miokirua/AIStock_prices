@@ -10,6 +10,7 @@ import com.example.aistock_prices.stock.data.StockCache
 import com.example.aistock_prices.stock.data.StockMeta
 import com.example.aistock_prices.stock.data.StockQuote
 import com.example.aistock_prices.stock.data.StockRepository
+import com.example.aistock_prices.stock.data.StockSearchItem
 import com.example.aistock_prices.stock.data.Watchlist
 import com.example.aistock_prices.stock.ui.FeatureTips
 import com.example.aistock_prices.stock.ui.StockFormat
@@ -75,6 +76,17 @@ internal class StockListPage : BasePager() {
     private var pendingRemove by observable<StockQuote?>(null)
     private var addInput by observable("")
     private var addInputRef: ViewRef<InputView>? = null
+    /** 「添加自选股」弹窗里的搜索候选（腾讯 smartbox 联想） */
+    private var searchResults by observableList<StockSearchItem>()
+    /** 搜索请求进行中（展示 loading 行，避免用户以为输入没反应） */
+    private var searching by observable(false)
+    /** 搜索防抖定时器（边输边搜，停手 350ms 才真正请求） */
+    private var searchTimerRef = ""
+    /**
+     * 添加成功计数器：搜索结果行的「＋ / 已添加」是按需读 SP 判断的，而 SP 不是响应式的
+     * ——在 attr 里读一下这个 observable，就能在添加后驱动那些行重新求值。
+     */
+    private var addTick by observable(0)
     /** 备份与恢复弹窗（导出到剪贴板 / 粘贴恢复） */
     private var showBackupDialog by observable(false)
     private var backupInput by observable("")
@@ -118,6 +130,20 @@ internal class StockListPage : BasePager() {
     private var groupDialogRenameFrom by observable("")
     private var groupInput by observable("")
     private var groupInputRef: ViewRef<InputView>? = null
+
+    // ==================== 批量多选（v1.9.35） ====================
+    /**
+     * 是否处于批量多选态。
+     * 入口只有一个：长按股票行 → 「移动到分组」浮层底部的「批量选择…」——
+     * 这样既不动现有的长按语义，也不用往 ☰ 菜单塞新项（那条路得同步整套引导几何）。
+     */
+    private var selectMode by observable(false)
+    /** 多选态下已勾选的股票代码（按 code 定位，与列表顺序 / 排序无关） */
+    private var selectedCodes by observableList<String>()
+    /** 批量「移动到分组」浮层 */
+    private var showBatchMove by observable(false)
+    /** 批量删除二次确认浮层 */
+    private var pendingBatchDelete by observable(false)
 
     // ==================== 就地功能提示（v1.9.31） ====================
     /**
@@ -202,16 +228,73 @@ internal class StockListPage : BasePager() {
                     paddingLeft(16f)
                     paddingRight(16f)
                 }
-                Text {
-                    attr {
-                        flex(1f)
-                        text(if (ctx.currentTab == 0) "自选股" else "AI 问答")
-                        fontSize(18f)
-                        fontWeightBold()
-                        color(ctx.pal.textMain)
+                // 标题：多选态下换成已选数量
+                vif({ ctx.selectMode }) {
+                    Text {
+                        attr {
+                            flex(1f)
+                            text("已选 ${ctx.selectedCodes.size} 只")
+                            fontSize(18f)
+                            fontWeightBold()
+                            color(ctx.pal.textMain)
+                        }
                     }
                 }
-                vif({ ctx.currentTab == 0 }) {
+                vif({ !ctx.selectMode }) {
+                    Text {
+                        attr {
+                            flex(1f)
+                            text(if (ctx.currentTab == 0) "自选股" else "AI 问答")
+                            fontSize(18f)
+                            fontWeightBold()
+                            color(ctx.pal.textMain)
+                        }
+                    }
+                }
+                // ---------- 多选态右侧：全选 / 切换 / 取消 ----------
+                vif({ ctx.selectMode }) {
+                    View {
+                        attr {
+                            paddingLeft(6f)
+                            paddingRight(6f)
+                            paddingTop(4f)
+                            paddingBottom(4f)
+                            marginRight(10f)
+                        }
+                        Text {
+                            attr {
+                                text(if (ctx.allSelected()) "取消全选" else "全选")
+                                fontSize(14f)
+                                color(ctx.pal.accent)
+                            }
+                        }
+                        event {
+                            click { ctx.toggleSelectAll() }
+                        }
+                    }
+                }
+                vif({ ctx.selectMode }) {
+                    View {
+                        attr {
+                            paddingTop(6f)
+                            paddingBottom(6f)
+                            paddingLeft(8f)
+                            paddingRight(4f)
+                        }
+                        Text {
+                            attr {
+                                text("取消")
+                                fontSize(14f)
+                                color(ctx.pal.textSub)
+                            }
+                        }
+                        event {
+                            click { ctx.exitSelectMode() }
+                        }
+                    }
+                }
+                // ---------- 常规态右侧：刷新 ----------
+                vif({ !ctx.selectMode && ctx.currentTab == 0 }) {
                     View {
                         ref { ctx.refreshBtnRef = it }
                         attr {
@@ -235,23 +318,25 @@ internal class StockListPage : BasePager() {
                 }
                 // 三条横杠：下拉菜单（添加自选 / AI 设置）
                 // 注：Text 不支持 padding，包一层 View 容器承载点击区域
-                View {
-                    ref { ctx.menuBtnRef = it }
-                    attr {
-                        paddingTop(6f)
-                        paddingBottom(6f)
-                        paddingLeft(8f)
-                        paddingRight(4f)
-                    }
-                    Text {
+                vif({ !ctx.selectMode }) {
+                    View {
+                        ref { ctx.menuBtnRef = it }
                         attr {
-                            text("☰")
-                            fontSize(20f)
-                            color(ctx.pal.textMain)
+                            paddingTop(6f)
+                            paddingBottom(6f)
+                            paddingLeft(8f)
+                            paddingRight(4f)
                         }
-                    }
-                    event {
-                        click { ctx.showMenu = !ctx.showMenu }
+                        Text {
+                            attr {
+                                text("☰")
+                                fontSize(20f)
+                                color(ctx.pal.textMain)
+                            }
+                        }
+                        event {
+                            click { ctx.showMenu = !ctx.showMenu }
+                        }
                     }
                 }
             }
@@ -316,9 +401,7 @@ internal class StockListPage : BasePager() {
                             event {
                                 click {
                                     ctx.showMenu = false
-                                    ctx.addInput = ""
-                                    ctx.addInputRef?.view?.setText("")
-                                    ctx.showAddDialog = true
+                                    ctx.openAddDialog()
                                 }
                             }
                         }
@@ -529,7 +612,7 @@ internal class StockListPage : BasePager() {
                     vif({ ctx.tipGroupVisible }) {
                         featureTipBar(
                             ctx.pal,
-                            "点 ＋ 新建分组；长按股票行可移动到分组，长按分组名可重命名或删除",
+                            "点 ＋ 新建分组；长按股票行可移动到分组、或进入批量选择，长按分组名可重命名或删除",
                             { ctx.dismissFeatureTip(FeatureTips.GROUP) }
                         ).invoke(this)
                     }
@@ -561,20 +644,35 @@ internal class StockListPage : BasePager() {
                 }
             }
 
-            // ---------- 底部任务栏 ----------
+            // ---------- 底部任务栏（多选态下整体替换为批量操作条） ----------
             View {
                 attr {
                     flexDirectionColumn()
                     backgroundColor(ctx.pal.card)
                     border(Border(0.5f, BorderStyle.SOLID, ctx.pal.divider))
                 }
-                View {
-                    attr {
-                        flexDirectionRow()
-                        height(54f)
+                vif({ !ctx.selectMode }) {
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            height(54f)
+                        }
+                        ctx.tabItem("自选股", 0) { ctx.tabSelfRef = it }.invoke(this)
+                        ctx.tabItem("AI 问答", 1) { ctx.tabAiRef = it }.invoke(this)
                     }
-                    ctx.tabItem("自选股", 0) { ctx.tabSelfRef = it }.invoke(this)
-                    ctx.tabItem("AI 问答", 1) { ctx.tabAiRef = it }.invoke(this)
+                }
+                vif({ ctx.selectMode }) {
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            height(54f)
+                            alignItemsCenter()
+                        }
+                        ctx.batchAction("删除", danger = true) { ctx.pendingBatchDelete = true }.invoke(this)
+                        ctx.batchAction("移动分组") { ctx.showBatchMove = true }.invoke(this)
+                        ctx.batchAction("置顶") { ctx.doBatchPin(true) }.invoke(this)
+                        ctx.batchAction("取消置顶") { ctx.doBatchPin(false) }.invoke(this)
+                    }
                 }
             }
 
@@ -588,7 +686,7 @@ internal class StockListPage : BasePager() {
                             backgroundColor(ctx.pal.maskFull)
                         }
                         event {
-                            click { ctx.showAddDialog = false }
+                            click { ctx.closeAddDialog() }
                         }
                         View {
                             attr {
@@ -606,7 +704,15 @@ internal class StockListPage : BasePager() {
                                     fontSize(16f)
                                     fontWeightSemiBold()
                                     color(ctx.pal.textMain)
-                                    marginBottom(14f)
+                                    marginBottom(4f)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text("输入代码、名称或拼音，从下面的结果里点选即可")
+                                    fontSize(11f)
+                                    color(ctx.pal.textSub)
+                                    marginBottom(12f)
                                 }
                             }
                             View {
@@ -626,19 +732,95 @@ internal class StockListPage : BasePager() {
                                         height(40f)   // 显式高度：Kuikly Input 无 height 时 Android EditText 无可点击区域
                                         fontSize(14f)
                                         color(ctx.pal.textMain)
-                                        placeholder("如 600519 或 sh600519")
+                                        placeholder("如 600519 / 茅台 / mt")
                                         placeholderColor(ctx.pal.textSub)
-                                        maxTextLength(12)   // 股票代码最长 8 位 + 市场前缀（sh/sz/bj/hk 2 位）
+                                        // 中文名最长约 5 字、拼音串可能更长，别卡太紧否则输入被截断
+                                        maxTextLength(20)
                                     }
                                     event {
-                                        textDidChange { ctx.addInput = it.text }
+                                        textDidChange { ctx.onSearchInput(it.text) }
+                                    }
+                                }
+                            }
+                            // ---------- 搜索结果区（固定高度，内部滚动） ----------
+                            View {
+                                attr {
+                                    height(248f)
+                                    marginTop(10f)
+                                    flexDirectionColumn()
+                                    overflow(true)
+                                }
+                                // 未输入
+                                vif({ ctx.addInput.isBlank() }) {
+                                    View {
+                                        attr {
+                                            flex(1f)
+                                            allCenter()
+                                        }
+                                        Text {
+                                            attr {
+                                                text("支持股票代码、中文名称、拼音首字母")
+                                                fontSize(12f)
+                                                color(ctx.pal.textSub)
+                                            }
+                                        }
+                                    }
+                                }
+                                // 搜索中
+                                vif({ ctx.addInput.isNotBlank() && ctx.searching }) {
+                                    View {
+                                        attr {
+                                            flex(1f)
+                                            allCenter()
+                                            flexDirectionRow()
+                                        }
+                                        ActivityIndicator {
+                                            attr {
+                                                isGrayStyle(false)
+                                            }
+                                        }
+                                        Text {
+                                            attr {
+                                                text("  搜索中...")
+                                                fontSize(12f)
+                                                color(ctx.pal.textSub)
+                                            }
+                                        }
+                                    }
+                                }
+                                // 无结果
+                                vif({ ctx.addInput.isNotBlank() && !ctx.searching && ctx.searchResults.isEmpty() }) {
+                                    View {
+                                        attr {
+                                            flex(1f)
+                                            allCenter()
+                                        }
+                                        Text {
+                                            attr {
+                                                text("没有匹配的 A 股，换个名称或代码再试")
+                                                fontSize(12f)
+                                                color(ctx.pal.textSub)
+                                            }
+                                        }
+                                    }
+                                }
+                                // 结果列表
+                                vif({ ctx.addInput.isNotBlank() && !ctx.searching && ctx.searchResults.isNotEmpty() }) {
+                                    Scroller {
+                                        attr {
+                                            flex(1f)
+                                            showScrollerIndicator(false)
+                                        }
+                                        vfor({ ctx.searchResults }) { item ->
+                                            ctx.searchResultRow(item).invoke(this)
+                                        }
                                     }
                                 }
                             }
                             View {
                                 attr {
                                     flexDirectionRow()
-                                    marginTop(16f)
+                                    marginTop(14f)
                                 }
                                 View {
                                     attr {
@@ -651,13 +833,13 @@ internal class StockListPage : BasePager() {
                                     }
                                     Text {
                                         attr {
-                                            text("取消")
+                                            text("关闭")
                                             fontSize(14f)
                                             color(ctx.pal.textSub)
                                         }
                                     }
                                     event {
-                                        click { ctx.showAddDialog = false }
+                                        click { ctx.closeAddDialog() }
                                     }
                                 }
                                 View {
@@ -670,7 +852,7 @@ internal class StockListPage : BasePager() {
                                     }
                                     Text {
                                         attr {
-                                            text("添加")
+                                            text("直接添加")
                                             fontSize(14f)
                                             color(ctx.pal.onAccent)
                                             fontWeightSemiBold()
@@ -970,6 +1152,14 @@ internal class StockListPage : BasePager() {
             }
             vif({ ctx.showGroupSort }) {
                 ctx.groupSortSheet().invoke(this)
+            }
+
+            // ---------- 批量多选浮层（v1.9.35） ----------
+            vif({ ctx.showBatchMove }) {
+                ctx.batchMoveSheet().invoke(this)
+            }
+            vif({ ctx.pendingBatchDelete }) {
+                ctx.batchDeleteConfirm().invoke(this)
             }
 
             // ---------- 首启引导：询问弹窗 ----------
@@ -1476,6 +1666,8 @@ internal class StockListPage : BasePager() {
         activeGroup = Watchlist.GROUP_ALL
         moveSheetQuote = null
         groupMenuName = null
+        // 恢复后整份自选都换了，多选里记的 code 可能已不存在
+        exitSelectMode()
         reloadGroups()
         loadData()
         chatView?.reload()
@@ -1564,6 +1756,8 @@ internal class StockListPage : BasePager() {
     private fun switchGroup(group: String) {
         if (activeGroup == group) return
         activeGroup = group
+        // 可见集合变了，旧勾选可能已经不在列表里 → 清空，避免「看不见却已被选中」
+        if (selectMode) selectedCodes.clear()
         applyFilterAndSort()
     }
 
@@ -1787,6 +1981,36 @@ internal class StockListPage : BasePager() {
                                     ctx.moveTargetRow(quote, name, name).invoke(this)
                                 }
                             }
+                            // 分隔线 + 批量选择入口：以当前这只为起点进入多选态。
+                            // 放在分组列表下方，与「把这一只移到某组」区分开，不会误触。
+                            View {
+                                attr {
+                                    height(1f)
+                                    marginLeft(20f)
+                                    marginRight(20f)
+                                    backgroundColor(ctx.pal.divider)
+                                }
+                            }
+                            View {
+                                attr {
+                                    height(46f)
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    paddingLeft(20f)
+                                    paddingRight(20f)
+                                }
+                                Text {
+                                    attr {
+                                        flex(1f)
+                                        text("批量选择…")
+                                        fontSize(14f)
+                                        color(ctx.pal.accent)
+                                    }
+                                }
+                                event {
+                                    click { ctx.enterSelectMode(quote.code) }
+                                }
+                            }
                         }
                     }
                 }
@@ -1828,6 +2052,321 @@ internal class StockListPage : BasePager() {
                 }
                 event {
                     click { ctx.doMoveToGroup(quote, filter) }
+                }
+            }
+        }
+    }
+
+    // ==================== 批量多选（v1.9.35） ====================
+
+    /** 进入多选态并预选 [code]（从长按浮层的「批量选择…」进入） */
+    private fun enterSelectMode(code: String) {
+        moveSheetQuote = null
+        groupMenuName = null
+        // 多选只对自选列表有意义
+        currentTab = 0
+        // 展开中的左滑行先归位，否则与勾选态并存的观感很乱
+        swipeStates.values.forEach { it.offset = 0f }
+        selectedCodes.clear()
+        selectedCodes.add(code)
+        selectMode = true
+    }
+
+    /** 退出多选态并清空选择 */
+    private fun exitSelectMode() {
+        selectMode = false
+        selectedCodes.clear()
+        showBatchMove = false
+        pendingBatchDelete = false
+    }
+
+    private fun toggleSelect(code: String) {
+        if (selectedCodes.contains(code)) selectedCodes.remove(code) else selectedCodes.add(code)
+    }
+
+    /** 当前可见列表是否已全选（列表为空时不算全选） */
+    private fun allSelected(): Boolean {
+        val codes = quotes.map { it.code }
+        return codes.isNotEmpty() && codes.all { selectedCodes.contains(it) }
+    }
+
+    /** 全选 / 取消全选（只作用于当前可见列表，即当前分组过滤 + 排序后的结果） */
+    private fun toggleSelectAll() {
+        val codes = quotes.map { it.code }
+        if (codes.isNotEmpty() && codes.all { selectedCodes.contains(it) }) {
+            selectedCodes.clear()
+        } else {
+            selectedCodes.clear()
+            selectedCodes.addAll(codes)
+        }
+    }
+
+    private fun doBatchPin(pinned: Boolean) {
+        val codes = selectedCodes.toList()
+        val changed = Watchlist.pinAll(sp, codes, pinned)
+        exitSelectMode()
+        reloadGroups()
+        loadData()
+        bridgeModule.toast(
+            when {
+                !changed -> "置顶状态没有变化"
+                pinned -> "已置顶 ${codes.size} 只"
+                else -> "已取消置顶 ${codes.size} 只"
+            }
+        )
+    }
+
+    private fun doBatchDelete() {
+        val codes = selectedCodes.toList()
+        val n = Watchlist.removeAll(sp, codes)
+        exitSelectMode()
+        reloadGroups()
+        loadData()
+        bridgeModule.toast(if (n > 0) "已从自选移除 $n 只" else "没有可移除的股票")
+    }
+
+    private fun doBatchMove(group: String) {
+        val codes = selectedCodes.toList()
+        val n = Watchlist.moveAllToGroup(sp, codes, group)
+        exitSelectMode()
+        reloadGroups()
+        loadData()
+        val label = if (group.isEmpty()) Watchlist.GROUP_NONE_LABEL else group
+        bridgeModule.toast(if (n > 0) "已把 $n 只移到「$label」" else "分组没有变化")
+    }
+
+    /** 批量操作条上的单个按钮（禁用态由选中数量驱动，必须在 attr 内读取才具响应式） */
+    private fun batchAction(label: String, danger: Boolean = false, onClick: () -> Unit): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    val on = ctx.selectedCodes.isNotEmpty()
+                    flex(1f)
+                    height(36f)
+                    marginLeft(6f)
+                    marginRight(6f)
+                    borderRadius(18f)
+                    allCenter()
+                    backgroundColor(
+                        when {
+                            !on -> ctx.pal.chip2Bg
+                            danger -> ctx.pal.up
+                            else -> ctx.pal.accentChipBg
+                        }
+                    )
+                }
+                Text {
+                    attr {
+                        val on = ctx.selectedCodes.isNotEmpty()
+                        text(label)
+                        fontSize(13f)
+                        fontWeightSemiBold()
+                        color(
+                            when {
+                                !on -> ctx.pal.textSub
+                                danger -> ctx.pal.onAccent
+                                else -> ctx.pal.accent
+                            }
+                        )
+                    }
+                }
+                event {
+                    click {
+                        if (ctx.selectedCodes.isNotEmpty()) onClick()
+                    }
+                }
+            }
+        }
+    }
+
+    /** 批量「移动到分组」浮层（作用于整个多选集合） */
+    private fun batchMoveSheet(): ViewBuilder {
+        val ctx = this
+        return {
+            Modal {
+                View {
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        backgroundColor(ctx.pal.maskFull)
+                    }
+                    event {
+                        click { ctx.showBatchMove = false }
+                    }
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 60f)
+                            borderRadius(12f)
+                            backgroundColor(ctx.pal.card)
+                            paddingTop(18f)
+                            paddingBottom(18f)
+                            flexDirectionColumn()
+                            overflow(true)
+                        }
+                        // 空点击消费：避免冒泡到遮罩把浮层关掉
+                        event {
+                            click { }
+                        }
+                        Text {
+                            attr {
+                                text("移动到分组")
+                                fontSize(16f)
+                                fontWeightSemiBold()
+                                color(ctx.pal.textMain)
+                                marginLeft(20f)
+                                marginRight(20f)
+                                marginBottom(4f)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text("已选 ${ctx.selectedCodes.size} 只")
+                                fontSize(12f)
+                                color(ctx.pal.textSub)
+                                marginLeft(20f)
+                                marginRight(20f)
+                                marginBottom(10f)
+                            }
+                        }
+                        Scroller {
+                            attr {
+                                // 最多露 7 行，再多就滚动，避免浮层高于屏幕
+                                height((1 + ctx.groupNames.size).coerceAtMost(7) * 46f)
+                                showScrollerIndicator(false)
+                            }
+                            ctx.batchMoveRow(Watchlist.GROUP_NONE_LABEL, "").invoke(this)
+                            vfor({ ctx.groupNames }) { name ->
+                                ctx.batchMoveRow(name, name).invoke(this)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 批量移动浮层里的选项行。
+     * 与单只移动不同：所选股票可能分散在不同分组，逐个打勾没有意义，故只列分组名。
+     */
+    private fun batchMoveRow(label: String, filter: String): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    height(46f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(20f)
+                    paddingRight(20f)
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text(label)
+                        fontSize(14f)
+                        color(ctx.pal.textMain)
+                    }
+                }
+                event {
+                    click { ctx.doBatchMove(filter) }
+                }
+            }
+        }
+    }
+
+    /** 批量删除二次确认 */
+    private fun batchDeleteConfirm(): ViewBuilder {
+        val ctx = this
+        return {
+            Modal {
+                View {
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        backgroundColor(ctx.pal.maskFull)
+                    }
+                    event {
+                        click { ctx.pendingBatchDelete = false }
+                    }
+                    View {
+                        attr {
+                            width(ctx.pagerData.pageViewWidth - 80f)
+                            borderRadius(12f)
+                            backgroundColor(ctx.pal.card)
+                            padding(20f)
+                            flexDirectionColumn()
+                        }
+                        event {
+                            click { }
+                        }
+                        Text {
+                            attr {
+                                text("移出自选")
+                                fontSize(16f)
+                                fontWeightSemiBold()
+                                color(ctx.pal.textMain)
+                                marginBottom(8f)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(
+                                    "将从自选中移除 ${ctx.selectedCodes.size} 只股票，" +
+                                        "已记录的关键位不受影响。此操作不可撤销。"
+                                )
+                                fontSize(13f)
+                                color(ctx.pal.textSub)
+                                marginBottom(18f)
+                            }
+                        }
+                        View {
+                            attr {
+                                flexDirectionRow()
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.chip2Bg)
+                                    marginRight(12f)
+                                }
+                                Text {
+                                    attr {
+                                        text("取消")
+                                        fontSize(14f)
+                                        color(ctx.pal.textSub)
+                                    }
+                                }
+                                event {
+                                    click { ctx.pendingBatchDelete = false }
+                                }
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(40f)
+                                    borderRadius(20f)
+                                    allCenter()
+                                    backgroundColor(ctx.pal.up)
+                                }
+                                Text {
+                                    attr {
+                                        text("移除")
+                                        fontSize(14f)
+                                        color(ctx.pal.onAccent)
+                                        fontWeightSemiBold()
+                                    }
+                                }
+                                event {
+                                    click { ctx.doBatchDelete() }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2457,17 +2996,156 @@ internal class StockListPage : BasePager() {
     }
 
     /** 添加自选：代码归一化 -> 有效性校验 -> 持久化 -> 刷新 */
+    // ==================== 搜索添加（v1.9.35） ====================
+
+    /** 打开「添加自选股」弹窗（清空上一次的输入与候选） */
+    private fun openAddDialog() {
+        resetSearchState()
+        showAddDialog = true
+    }
+
+    /** 关闭弹窗并清理搜索状态（防抖定时器必须清，否则关窗后回调仍会往回写） */
+    private fun closeAddDialog() {
+        showAddDialog = false
+        resetSearchState()
+    }
+
+    private fun resetSearchState() {
+        if (searchTimerRef.isNotEmpty()) {
+            clearTimeout(searchTimerRef)
+            searchTimerRef = ""
+        }
+        addInput = ""
+        searchResults.clear()
+        searching = false
+        addInputRef?.view?.setText("")
+    }
+
+    /** 输入变化：防抖 350ms 后再发请求，避免边打字边打接口 */
+    private fun onSearchInput(text: String) {
+        addInput = text
+        if (searchTimerRef.isNotEmpty()) {
+            clearTimeout(searchTimerRef)
+            searchTimerRef = ""
+        }
+        val kw = text.trim()
+        if (kw.isEmpty()) {
+            searchResults.clear()
+            searching = false
+            return
+        }
+        searching = true
+        searchTimerRef = setTimeout(350) {
+            searchTimerRef = ""
+            doSearch(kw)
+        }
+    }
+
+    private fun doSearch(keyword: String) {
+        StockRepository.searchStocks(network, keyword) { list ->
+            // 丢弃过期响应：这段等待里用户可能又改了输入，旧结果不能盖新结果
+            if (addInput.trim() != keyword) return@searchStocks
+            searchResults.clear()
+            searchResults.addAll(list)
+            searching = false
+        }
+    }
+
+    /** 搜索结果单行：名称 + 代码/市场标签 + 右侧「＋ / 已添加」 */
+    private fun searchResultRow(item: StockSearchItem): ViewBuilder {
+        val ctx = this
+        return {
+            View {
+                attr {
+                    height(52f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(4f)
+                    paddingRight(4f)
+                }
+                View {
+                    attr {
+                        flex(1f)
+                        flexDirectionColumn()
+                        justifyContentCenter()
+                    }
+                    Text {
+                        attr {
+                            text(item.name)
+                            fontSize(15f)
+                            fontWeightSemiBold()
+                            color(ctx.pal.textMain)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("${item.symbol}  ${item.marketLabel}")
+                            fontSize(11f)
+                            color(ctx.pal.textSub)
+                            marginTop(2f)
+                        }
+                    }
+                }
+                Text {
+                    attr {
+                        // 读一次 addTick 建立响应式依赖：SP 不响应式，靠它把「＋」翻成「已添加」
+                        val added = ctx.addTick >= 0 &&
+                            Watchlist.stocks(ctx.sp).any { it.code == item.code }
+                        text(if (added) "已添加" else "＋")
+                        fontSize(if (added) 12f else 18f)
+                        fontWeightSemiBold()
+                        color(if (added) ctx.pal.textSub else ctx.pal.accent)
+                    }
+                }
+                event {
+                    click {
+                        if (Watchlist.stocks(ctx.sp).any { it.code == item.code }) {
+                            ctx.bridgeModule.toast("${item.name} 已在自选")
+                        } else {
+                            ctx.addFromSearch(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 从搜索结果添加自选（沿用「在某个分组里添加就自动归入该组」的既有语义） */
+    private fun addFromSearch(item: StockSearchItem) {
+        val meta = StockMeta(item.code, item.name)
+        if (!Watchlist.add(sp, meta)) {
+            bridgeModule.toast("${item.name} 已在自选")
+            return
+        }
+        val intoGroup = activeGroup
+        if (intoGroup.isNotEmpty() && intoGroup != Watchlist.GROUP_ALL) {
+            Watchlist.moveToGroup(sp, meta.code, intoGroup)
+            bridgeModule.toast("已添加 ${meta.name} 到「$intoGroup」")
+        } else {
+            bridgeModule.toast("已添加 ${meta.name}")
+        }
+        // 不关弹窗：连续添加多只更顺手；addTick 让结果行的「＋」翻成「已添加」
+        addTick++
+        reloadGroups()
+        loadData()
+    }
+
     private fun addStock() {
         val input = addInput.trim()
         if (input.isEmpty()) {
-            bridgeModule.toast("请输入股票代码")
+            bridgeModule.toast("请输入代码、名称或拼音")
             return
         }
         val code = Watchlist.normalizeCode(input)
+        // 兜底按钮只认标准代码：中文 / 拼音交给上方搜索结果，避免把中文拼进行情 URL
+        if (code.length != 8 || code.any { !it.isLetterOrDigit() }) {
+            bridgeModule.toast("请在下方搜索结果里点选要添加的股票")
+            return
+        }
         StockRepository.fetchQuotes(network, listOf(code)) { list ->
             val q = list.firstOrNull()
             if (q == null) {
-                bridgeModule.toast("未找到该股票，请检查代码")
+                bridgeModule.toast("没查到这只股票，请在下方结果里点选")
                 return@fetchQuotes
             }
             val meta = StockMeta(q.code, q.name.ifBlank { q.symbol })
@@ -2480,7 +3158,7 @@ internal class StockListPage : BasePager() {
                 } else {
                     bridgeModule.toast("已添加 ${meta.name}")
                 }
-                showAddDialog = false
+                closeAddDialog()
                 loadData()
             } else {
                 bridgeModule.toast("该股票已在自选")
@@ -2599,11 +3277,42 @@ internal class StockListPage : BasePager() {
                         paddingLeft(16f)
                         paddingRight(16f)
                         backgroundColor(ctx.pal.card)
-                        transform(translate = Translate(0f, 0f, ctx.swipeOffsetOf(quote.code)))
+                        // 多选态下强制归位：勾选态不该再叠一层左滑位移
+                        transform(
+                            translate = Translate(
+                                0f,
+                                0f,
+                                if (ctx.selectMode) 0f else ctx.swipeOffsetOf(quote.code)
+                            )
+                        )
                         animation(
                             Animation.easeInOut(ctx.swipeAnimDuration),
-                            ctx.swipeOffsetOf(quote.code)
+                            if (ctx.selectMode) 0f else ctx.swipeOffsetOf(quote.code)
                         )
+                    }
+                    // 多选态：左侧勾选圈
+                    vif({ ctx.selectMode }) {
+                        View {
+                            attr {
+                                width(22f)
+                                height(22f)
+                                borderRadius(11f)
+                                allCenter()
+                                marginRight(10f)
+                                backgroundColor(
+                                    if (ctx.selectedCodes.contains(quote.code)) ctx.pal.accent
+                                    else ctx.pal.chip2Bg
+                                )
+                            }
+                            Text {
+                                attr {
+                                    text(if (ctx.selectedCodes.contains(quote.code)) "✓" else "")
+                                    fontSize(13f)
+                                    fontWeightSemiBold()
+                                    color(ctx.pal.onAccent)
+                                }
+                            }
+                        }
                     }
                     // 左：名称 + 代码
                     View {
@@ -2711,6 +3420,11 @@ internal class StockListPage : BasePager() {
                     }
                     event {
                         click {
+                            // 多选态：点整行 = 勾选 / 取消勾选，不进详情
+                            if (ctx.selectMode) {
+                                ctx.toggleSelect(quote.code)
+                                return@click
+                            }
                             val st = ctx.swipeStates[quote.code]
                             val now = ctx.bridgeModule.currentTimeStamp()
                             if (st != null && st.offset < 0f) {
@@ -2719,10 +3433,11 @@ internal class StockListPage : BasePager() {
                                 ctx.openDetail(quote) // 刚结束滑动手势时不响应点击，避免误进详情
                             }
                         }
-                        // 长按：呼出「移动到分组」浮层。
+                        // 长按：呼出「移动到分组」浮层（多选态下不响应）。
                         // 顺手刷新手势结束时间戳，复用 click 的防抖窗口挡住长按抬手后的 click，
                         // 否则会「先弹浮层、紧接着又跳进详情页」
                         longPress {
+                            if (ctx.selectMode) return@longPress
                             val st = ctx.ensureSwipeState(quote.code)
                             st.lastGestureEndTime = ctx.bridgeModule.currentTimeStamp()
                             if (st.offset < 0f) st.offset = 0f
@@ -2730,11 +3445,12 @@ internal class StockListPage : BasePager() {
                         }
                         // 低层触摸事件实现左滑检测：
                         // 不注册 pan，避免 Android 上 DOWN 即 requestDisallowInterceptTouchEvent(true)
-                        // 导致父级列表无法拦截垂直滚动；垂直手势由列表接管，水平手势放行到这里
-                        touchDown { ctx.onTouchSwipe(quote, it, "down") }
-                        touchMove { ctx.onTouchSwipe(quote, it, "move") }
-                        touchUp { ctx.onTouchSwipe(quote, it, "up") }
-                        touchCancel { ctx.onTouchSwipe(quote, it, "cancel") }
+                        // 导致父级列表无法拦截垂直滚动；垂直手势由列表接管，水平手势放行到这里。
+                        // 多选态下整体禁用左滑，避免与勾选点击打架。
+                        touchDown { if (!ctx.selectMode) ctx.onTouchSwipe(quote, it, "down") }
+                        touchMove { if (!ctx.selectMode) ctx.onTouchSwipe(quote, it, "move") }
+                        touchUp { if (!ctx.selectMode) ctx.onTouchSwipe(quote, it, "up") }
+                        touchCancel { if (!ctx.selectMode) ctx.onTouchSwipe(quote, it, "cancel") }
                     }
                 }
                 // 分隔线
@@ -2875,6 +3591,8 @@ internal class StockListPage : BasePager() {
     /** 询问弹窗「开始引导」 */
     private fun startGuide() {
         showGuidePrompt = false
+        // 引导的定位依赖顶栏（刷新 / ☰）等元素，多选态下这些元素被 vif 换掉了 → 先退出多选
+        exitSelectMode()
         gotoGuideStep(1)
     }
 
@@ -3033,13 +3751,14 @@ internal class StockListPage : BasePager() {
         1 -> "这里展示你关注的股票：最新价、涨跌额与涨跌幅一目了然，左滑单行可置顶或删除。"
         2 -> "分组条把自选分成「持仓」「观察」等几类：点右侧 ＋ 新建分组，点组名只看该组，" +
             "长按组名可重命名或删除（删除分组不会删掉股票，只会让它们回到「未分组」）。"
-        3 -> "长按任意股票行，可把它移动到某个分组；点表头可按价格 / 涨跌幅 / 名称排序，" +
-            "再点一次切换升降序，置顶的股票无论怎么排都在最前面。"
+        3 -> "长按任意股票行，可把它移动到某个分组（浮层底部还能进「批量选择」，一次处理多只）；" +
+            "点表头可按价格 / 涨跌幅 / 名称排序，再点一次切换升降序，置顶的股票无论怎么排都在最前面。"
         4 -> "切到「AI 问答」，可与 AI 多轮讨论任意股票，回复会附带实时行情卡片。" +
             "长按任意消息可复制、引用追问、重新生成或删除。"
         5 -> "点右上角「刷新」，或直接下拉列表，即可手动拉取最新行情。"
         6 -> "这是功能菜单 ☰，添加自选、外观切换、AI 设置、备份与使用帮助都从这里进入。"
-        7 -> "输入股票代码即可添加自选，例如 sh600519 贵州茅台；在某个分组里添加会自动归入该组。"
+        7 -> "支持按代码、名称或拼音搜索：如 600519、茅台、mt，点搜索结果即可加入自选；" +
+            "在某个分组里添加会自动归入该组。"
         8 -> "一键切换深色 / 浅色外观，右侧小字显示当前档位。"
         9 -> "在此配置 AI 服务（Base URL / Key / 模型），行情分析与问答共用。"
         10 -> "把自选、分组、关键位与 AI 会话导出成一段文本，粘贴到备忘录保存；" +
@@ -3191,7 +3910,7 @@ internal class StockListPage : BasePager() {
 
         /** 引导版本号：内容有新增时就升一档，老用户在菜单「功能说明」上会看到「有新内容」角标 */
         private const val KEY_GUIDE_VER = "guide_intro_ver"
-        private const val GUIDE_VER = "3"
+        private const val GUIDE_VER = "4"
 
         /** 引导总步数（1..GUIDE_LAST_STEP）；卡片右侧「N/总步数」与「完成」判定都用它 */
         private const val GUIDE_LAST_STEP = 11
