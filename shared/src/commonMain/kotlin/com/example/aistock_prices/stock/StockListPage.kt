@@ -742,10 +742,13 @@ internal class StockListPage : BasePager() {
                                     }
                                 }
                             }
-                            // ---------- 搜索结果区（固定高度，内部滚动） ----------
+                            // ---------- 搜索结果区（有结果时给足滚动空间，其余状态收缩为单行提示高度） ----------
                             View {
                                 attr {
-                                    height(248f)
+                                    height(
+                                        if (ctx.addInput.isNotBlank() && !ctx.searching && ctx.searchResults.isNotEmpty()) 248f
+                                        else 64f
+                                    )
                                     marginTop(10f)
                                     flexDirectionColumn()
                                     overflow(true)
