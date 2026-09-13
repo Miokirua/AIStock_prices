@@ -108,6 +108,9 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
     private var chatInputRef: ViewRef<InputView>? = null
     /** 消息列表 Scroller 引用：进入页面/发送消息后自动滚动到底端 */
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
+    /** 挂起的「滚到底」请求：内容/视口尚未完成布局时保留，等 contentSizeChanged 回调后补做 */
+    private var pendingScrollToBottom = false
+    private var pendingScrollAnimated = false
     /** code -> 行情（null=尚未加载成功） */
     private val cardQuotes = mutableMapOf<String, StockQuote?>()
     private val fetching = mutableSetOf<String>()
@@ -159,11 +162,35 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
         tipMsgVisible = false
     }
 
-    /** 消息列表滚动到底端（延迟一拍等内容布局完成；offsetY 传大值由平台 clamp） */
+    /**
+     * 消息列表滚动到底端。
+     *
+     * ⚠️ 不要用 `setContentOffset(0f, 100000f)` 这种「传一个大数让平台 clamp」的写法：
+     * 实测部分平台（iOS）会把该设定值**原样**应用为 contentOffset，而内容高度远小于 100000，
+     * 视口停在没有内容的位置 → 消息区呈现空白，必须手动下拉才把内容拽回来
+     * （对应问题：「进 AI 页有对话记录时消息区空白、下拉才出现」）。
+     * 这里改为用 Scroller 的真实内容高度精确计算目标偏移 = 内容高 - 视口高（内容不足一屏则为 0）。
+     *
+     * 内容/视口尺寸未就绪（尚未布局）时不直接放弃，而是保留请求，
+     * 由 [messageList] 里挂的 `contentSizeChanged` 在内容测量完成后补做，避免「定时器到点但内容还没布局」导致丢滚动。
+     */
     private fun scrollToBottom(animated: Boolean = true) {
-        setTimeout(pagerId, 80) {
-            chatScrollerRef?.view?.setContentOffset(0f, 100000f, animated)
-        }
+        pendingScrollToBottom = true
+        pendingScrollAnimated = animated
+        // 延迟一拍等内容布局完成；未完成时保留请求，等 contentSizeChanged 回调补做
+        setTimeout(pagerId, 80) { applyScrollToBottom() }
+    }
+
+    /** 应用挂起的「滚到底」请求；内容/视口尺寸未就绪则保留请求，等下一次 contentSizeChanged */
+    private fun applyScrollToBottom() {
+        if (!pendingScrollToBottom) return
+        val sv = chatScrollerRef?.view ?: return
+        val contentH = sv.contentView?.frame?.height ?: 0f
+        val viewH = sv.frame.height
+        if (contentH <= 0f || viewH <= 0f) return
+        pendingScrollToBottom = false
+        val target = (contentH - viewH).coerceAtLeast(0f)
+        sv.setContentOffset(0f, target, pendingScrollAnimated)
     }
 
     /** 外部(ai_chat 独立页)初始化:切换到指定股票会话;autoSend 时自动发问 */
@@ -644,6 +671,12 @@ internal class AiChatView : ComposeView<AiChatViewAttr, AiChatViewEvent>() {
                 attr {
                     flex(1f)
                     showScrollerIndicator(false)
+                }
+                event {
+                    // 内容尺寸变化（消息增删/换行导致高度变化）时补做挂起的「滚到底」请求：
+                    // 解决「进入页面时内容尚未布局，80ms 定时器到点内容高仍为 0 → 滚动丢失 → 停在顶部」
+                    // 以及「内容长高后视口没跟着到底」的时序问题。未挂起请求时为空操作，不干扰用户手动滚动。
+                    contentSizeChanged { _, _ -> ctx.applyScrollToBottom() }
                 }
                 vfor({ ctx.activeMsgs }) { msg ->
                     ctx.messageBubble(msg).invoke(this)

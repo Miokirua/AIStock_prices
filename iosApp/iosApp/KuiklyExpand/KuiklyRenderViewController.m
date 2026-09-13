@@ -5,7 +5,7 @@
 #import "iosApp-Swift.h"
 
 #define HRWeakSelf __weak typeof(self) weakSelf = self;
-@interface KuiklyRenderViewController()<KuiklyRenderViewControllerBaseDelegatorDelegate>
+@interface KuiklyRenderViewController()<KuiklyRenderViewControllerBaseDelegatorDelegate, UIGestureRecognizerDelegate>
 
 @property (nonatomic, strong) KuiklyRenderViewControllerBaseDelegator *delegator;
 
@@ -40,6 +40,14 @@
                                              selector:@selector(p_keyboardWillChangeFrame:)
                                                  name:UIKeyboardWillChangeFrameNotification
                                                object:nil];
+    // 点击输入框以外的区域收起键盘：Kuikly 渲染层不会自动收键盘，键盘弹出后会一直遮挡下方内容，
+    // 叠加键盘避让把整页上移（顶部会话栏被顶出屏幕），用户会感觉「发送后键盘不收、点不到其余功能」。
+    // 加一个不打断其余手势的点击手势：落在文本输入控件上时不处理，其余位置 endEditing 收起键盘。
+    UITapGestureRecognizer *dismissTap =
+        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(p_dismissKeyboardOnTap:)];
+    dismissTap.cancelsTouchesInView = NO; // 不吞触摸，保证 Kuikly 自己的点击/长按/滚动（发送、切会话等）照常
+    dismissTap.delegate = self;
+    [self.view addGestureRecognizer:dismissTap];
     [_delegator viewDidLoadWithView:self.view];
     [self.navigationController setNavigationBarHidden:YES animated:NO];
 
@@ -129,6 +137,26 @@
         }
     }
     return nil;
+}
+
+#pragma mark 点击输入框以外收起键盘
+
+- (void)p_dismissKeyboardOnTap:(UITapGestureRecognizer *)gesture {
+    // 无第一响应者时 endEditing 为空操作，可放心每次点击都调用
+    [self.view endEditing:YES];
+}
+
+// 触摸落在文本输入控件（或其子视图）上时，不触发「收起键盘」，保证点击输入框仍是聚焦/编辑；
+// 其余位置（消息区、会话栏、发送按钮、快捷问句等）点击即收起键盘。
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    UIView *v = touch.view;
+    while (v) {
+        if ([v isKindOfClass:[UITextField class]] || [v isKindOfClass:[UITextView class]]) {
+            return NO;
+        }
+        v = v.superview;
+    }
+    return YES;
 }
 
 - (NSDictionary *)p_mergeExtParamsWithOriditalParam:(NSDictionary *)pageParam {
