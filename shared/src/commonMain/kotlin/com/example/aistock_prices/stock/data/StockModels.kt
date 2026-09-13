@@ -131,6 +131,8 @@ object Watchlist {
         val newList = list.filter { it.code != code }
         if (newList.size == list.size) return false
         save(sp, newList)
+        // 同步清行情缓存，否则删除后 loadData 会用缓存把这只「复活」
+        StockCache.removeQuotes(sp, setOf(code))
         return true
     }
 
@@ -309,7 +311,11 @@ object Watchlist {
         val list = stocks(sp)
         val kept = list.filter { it.code !in targets }
         val removed = list.size - kept.size
-        if (removed > 0) save(sp, kept)
+        if (removed > 0) {
+            save(sp, kept)
+            // 同步清行情缓存，否则删除后 loadData 会用缓存把这几只「复活」
+            StockCache.removeQuotes(sp, targets)
+        }
         return removed
     }
 

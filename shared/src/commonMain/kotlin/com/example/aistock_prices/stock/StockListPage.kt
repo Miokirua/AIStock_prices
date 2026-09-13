@@ -1571,6 +1571,12 @@ internal class StockListPage : BasePager() {
             fromCache = true
             replaceQuotes(cached)
             loading = false
+        } else if (metas.isEmpty()) {
+            // ⚠️ 删光自选：缓存已被 removeQuotes 清空、fetchQuotes(空 metas) 也不会触发
+            // replaceQuotes，quotes 残留删除前的旧数据、只有重启才消失。这里强制清空。
+            fromCache = false
+            replaceQuotes(emptyList())
+            loading = false
         }
         // 2. 拉取最新数据
         fetchQuotes(metas)
@@ -1584,7 +1590,8 @@ internal class StockListPage : BasePager() {
                 replaceQuotes(list)
                 errorMsg = ""
                 StockCache.saveQuotes(sp, list)
-            } else if (quotes.isEmpty()) {
+            } else if (quotes.isEmpty() && metas.isNotEmpty()) {
+                // 只有「自选非空却拿不到行情」才算加载失败；自选为空是正常空态，不误报
                 errorMsg = "行情加载失败，请检查网络后重试"
             }
             loading = false
@@ -1722,14 +1729,17 @@ internal class StockListPage : BasePager() {
 
     /** 按 [activeGroup] 过滤 [allQuotes]，再套用置顶 + 排序，写回 quotes（vfor 数据源） */
     private fun applyFilterAndSort() {
-        val groupOf = Watchlist.stocks(sp).associate { it.code to it.group }
+        // ⚠️ 以当前自选为权威：行情缓存 / 旧数据里可能残留已删除股票的报价，
+        // 「全部」分组下也必须按 code 过滤，否则删除后会被缓存回填「复活」。
+        val metaMap = Watchlist.stocks(sp).associateBy { it.code }
+        val inWatchlist = allQuotes.filter { it.code in metaMap }
         val scoped = when (activeGroup) {
-            Watchlist.GROUP_ALL -> allQuotes
-            "" -> allQuotes.filter { (groupOf[it.code] ?: "").isEmpty() }
-            else -> allQuotes.filter { groupOf[it.code] == activeGroup }
+            Watchlist.GROUP_ALL -> inWatchlist
+            "" -> inWatchlist.filter { (metaMap[it.code]?.group ?: "").isEmpty() }
+            else -> inWatchlist.filter { metaMap[it.code]?.group == activeGroup }
         }
-        val pinned = scoped.filter { Watchlist.isPinned(sp, it.code) }
-        val rest = scoped.filter { !Watchlist.isPinned(sp, it.code) }
+        val pinned = scoped.filter { metaMap[it.code]?.pinned == true }
+        val rest = scoped.filter { metaMap[it.code]?.pinned != true }
         val sortedRest = when (sortKey) {
             "price" -> order(rest) { it.price }
             "changePercent" -> order(rest) { it.changePercent }

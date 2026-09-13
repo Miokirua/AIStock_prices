@@ -73,6 +73,17 @@ object StockCache {
         }
     }
 
+    /**
+     * 从行情缓存里移除指定 code 的报价（删除自选时同步调用，避免缓存残留）。
+     * 缓存没有对应条目时不做任何写入。
+     */
+    fun removeQuotes(sp: SharedPreferencesModule, codes: Set<String>) {
+        if (codes.isEmpty()) return
+        val list = loadQuotes(sp)
+        val kept = list.filter { it.code !in codes }
+        if (kept.size != list.size) saveQuotes(sp, kept)
+    }
+
     // ==================== 分时 ====================
 
     fun saveMinute(sp: SharedPreferencesModule, code: String, points: List<MinutePoint>) {
